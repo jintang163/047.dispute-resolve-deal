@@ -10,6 +10,7 @@ import (
 	"github.com/dispute-resolve/common/ai"
 	"github.com/dispute-resolve/common/cache"
 	"github.com/dispute-resolve/common/config"
+	"github.com/dispute-resolve/common/court"
 	"github.com/dispute-resolve/common/database"
 	"github.com/dispute-resolve/common/logger"
 	"github.com/dispute-resolve/common/utils"
@@ -24,6 +25,8 @@ type InitOptions struct {
 	EnableFlowable bool
 	EnableAI       bool
 	EnableMilvus   bool
+	EnableMinIO    bool
+	EnableCourt    bool
 	LogLevel       string
 }
 
@@ -93,6 +96,16 @@ func InitServiceWithOptions(opts InitOptions) *InitResult {
 		} else {
 			logger.Info("Milvus vector store initialized")
 		}
+	}
+
+	if opts.EnableMinIO {
+		database.InitMinIO(&config.GlobalConfig.MinIO)
+		logger.Info("MinIO client initialized")
+	}
+
+	if opts.EnableCourt {
+		court.InitMicroCourt()
+		logger.Info("MicroCourt client initialized")
 	}
 
 	stop := setupGracefulShutdown(opts.ServiceName)

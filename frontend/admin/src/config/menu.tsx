@@ -9,6 +9,8 @@ import {
   TeamOutlined,
   TrophyOutlined,
   SettingOutlined,
+  SafetyCertificateOutlined,
+  BankOutlined,
 } from '@ant-design/icons';
 
 export interface MenuItem {
@@ -92,6 +94,25 @@ export const menuConfig: MenuItem[] = [
     label: '绩效考核',
     icon: React.createElement(TrophyOutlined),
     path: '/performance',
+  },
+  {
+    key: 'judicial',
+    label: '司法确认',
+    icon: React.createElement(SafetyCertificateOutlined),
+    children: [
+      {
+        key: 'judicial-list',
+        label: '确认申请管理',
+        icon: React.createElement(FileTextOutlined),
+        path: '/judicial',
+      },
+      {
+        key: 'court-config',
+        label: '法院配置管理',
+        icon: React.createElement(BankOutlined),
+        path: '/court/config',
+      },
+    ],
   },
 ];
 

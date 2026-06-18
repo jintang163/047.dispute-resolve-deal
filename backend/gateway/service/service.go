@@ -5,18 +5,19 @@ import (
 )
 
 var (
-	userServiceInstance         UserService
-	disputeServiceInstance      DisputeService
-	mediationServiceInstance    MediationService
-	approvalServiceInstance     ApprovalService
-	aiServiceInstance           AIService
-	statsServiceInstance        StatsService
-	notificationServiceInstance NotificationService
-	performanceServiceInstance  PerformanceService
-	dispatchServiceInstance     DispatchService
-	videoServiceInstance        VideoService
-	esignServiceInstance        ESignService
-	once                        sync.Once
+	userServiceInstance              UserService
+	disputeServiceInstance           DisputeService
+	mediationServiceInstance         MediationService
+	approvalServiceInstance          ApprovalService
+	aiServiceInstance                AIService
+	statsServiceInstance             StatsService
+	notificationServiceInstance      NotificationService
+	performanceServiceInstance       PerformanceService
+	dispatchServiceInstance          DispatchService
+	videoServiceInstance             VideoService
+	esignServiceInstance             ESignService
+	judicialConfirmationServiceInstance JudicialConfirmationService
+	once                             sync.Once
 )
 
 func InitServices(
@@ -31,6 +32,7 @@ func InitServices(
 	dispatch DispatchService,
 	video VideoService,
 	esign ESignService,
+	judicialConfirmation JudicialConfirmationService,
 ) {
 	once.Do(func() {
 		userServiceInstance = user
@@ -44,6 +46,7 @@ func InitServices(
 		dispatchServiceInstance = dispatch
 		videoServiceInstance = video
 		esignServiceInstance = esign
+		judicialConfirmationServiceInstance = judicialConfirmation
 	})
 }
 
@@ -56,5 +59,6 @@ func StatsServiceInst() StatsService        { return statsServiceInstance }
 func NotificationServiceInst() NotificationService { return notificationServiceInstance }
 func PerformanceServiceInst() PerformanceService  { return performanceServiceInstance }
 func DispatchServiceInst() DispatchService     { return dispatchServiceInstance }
-func VideoServiceInst() VideoService        { return videoServiceInstance }
-func ESignServiceInst() ESignService        { return esignServiceInstance }
+func VideoServiceInst() VideoService              { return videoServiceInstance }
+func ESignServiceInst() ESignService              { return esignServiceInstance }
+func JudicialConfirmationServiceInst() JudicialConfirmationService { return judicialConfirmationServiceInstance }

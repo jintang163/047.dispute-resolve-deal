@@ -19,6 +19,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.dispute.app.model.Case
+import com.dispute.app.model.JudicialConfirmation
 import com.dispute.app.model.User
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -46,6 +47,15 @@ class AppState {
 
     private val _aiConversationId = mutableStateOf<String?>(null)
     val aiConversationId: State<String?> = _aiConversationId
+
+    private val _judicialList = mutableStateOf<List<JudicialConfirmation>>(emptyList())
+    val judicialList: State<List<JudicialConfirmation>> = _judicialList
+
+    private val _selectedJudicial = mutableStateOf<JudicialConfirmation?>(null)
+    val selectedJudicial: State<JudicialConfirmation?> = _selectedJudicial
+
+    private val _judicialStatusFilter = mutableStateOf<JudicialConfirmation.Status?>(null)
+    val judicialStatusFilter: State<JudicialConfirmation.Status?> = _judicialStatusFilter
 
     val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 
@@ -147,6 +157,50 @@ class AppState {
         _selectedCase.value = null
         _aiConversationId.value = null
         _caseStatusFilter.value = null
+        _judicialList.value = emptyList()
+        _selectedJudicial.value = null
+        _judicialStatusFilter.value = null
+    }
+
+    fun setJudicialList(list: List<JudicialConfirmation>) {
+        _judicialList.value = list
+    }
+
+    fun addJudicialConfirmation(confirmation: JudicialConfirmation) {
+        _judicialList.value = listOf(confirmation) + _judicialList.value
+    }
+
+    fun updateJudicialConfirmation(id: Long, update: (JudicialConfirmation) -> JudicialConfirmation) {
+        _judicialList.value = _judicialList.value.map {
+            if (it.id == id) update(it) else it
+        }
+    }
+
+    fun setSelectedJudicial(confirmation: JudicialConfirmation?) {
+        _selectedJudicial.value = confirmation
+    }
+
+    fun setJudicialStatusFilter(status: JudicialConfirmation.Status?) {
+        _judicialStatusFilter.value = status
+    }
+
+    fun getFilteredJudicialList(): List<JudicialConfirmation> {
+        val status = _judicialStatusFilter.value
+        return if (status == null) {
+            _judicialList.value
+        } else {
+            _judicialList.value.filter { it.status == status }
+        }
+    }
+
+    fun findJudicialConfirmation(id: Long): JudicialConfirmation? {
+        return _judicialList.value.find { it.id == id }
+            ?: _selectedJudicial.value?.takeIf { it.id == id }
+    }
+
+    fun findJudicialConfirmationByNo(confirmNo: String): JudicialConfirmation? {
+        return _judicialList.value.find { it.confirmNo == confirmNo }
+            ?: _selectedJudicial.value?.takeIf { it.confirmNo == confirmNo }
     }
 }
 

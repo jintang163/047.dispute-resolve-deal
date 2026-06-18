@@ -131,6 +131,25 @@ func RegisterRoutes(h *app.Hertz) {
 			}
 		}
 
+		judicial := userAuth.Group("/judicial")
+		{
+			judicial.GET("/list", handler.GetJudicialConfirmationList)
+			judicial.GET("/:id", handler.GetJudicialConfirmationDetail)
+			judicial.GET("/query", handler.QueryJudicialConfirmationByNo)
+			judicial.POST("", handler.CreateJudicialConfirmation)
+			judicial.POST("/:id/submit", handler.SubmitJudicialToCourt)
+			judicial.POST("/:id/query-status", handler.QueryCourtStatus)
+			judicial.POST("/:id/generate-doc", handler.GenerateConfirmationDocument)
+			judicial.POST("/:id/seal", handler.SealConfirmationDocument)
+			judicial.GET("/:id/logs", handler.GetConfirmationLogs)
+
+			remind := judicial.Group("/:id/remind")
+			{
+				remind.POST("/performance", handler.SendPerformanceReminder)
+				remind.POST("/expiration", handler.SendExpirationReminder)
+			}
+		}
+
 		approval := userAuth.Group("/approval")
 		{
 			approval.GET("/todo", handler.GetApprovalTodoList)
@@ -218,6 +237,16 @@ func RegisterRoutes(h *app.Hertz) {
 				ai.POST("/law-articles/vectorize", handler.VectorizeLawArticles)
 				ai.GET("/config", handler.GetAIConfig)
 				ai.PUT("/config", handler.UpdateAIConfig)
+			}
+
+			court := system.Group("/court")
+			{
+				court.GET("/config/list", handler.GetCourtConfigList)
+				court.GET("/config/:id", handler.GetCourtConfigDetail)
+				court.POST("/config", handler.CreateCourtConfig)
+				court.PUT("/config/:id", handler.UpdateCourtConfig)
+				court.DELETE("/config/:id", handler.DeleteCourtConfig)
+				court.GET("/options", handler.GetCourtOptions)
 			}
 		}
 	}

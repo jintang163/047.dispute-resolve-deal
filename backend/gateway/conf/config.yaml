@@ -79,3 +79,9 @@ service-ports:
   workflow: 9003
   ai: 9004
   notification: 9005
+
+court:
+  api_endpoint: "http://127.0.0.1:8088/microcourt"
+  api_app_id: "court-app-001"
+  api_secret: "court-secret-2024"
+  api_public_key: "-----BEGIN PUBLIC KEY-----\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA\n-----END PUBLIC KEY-----"

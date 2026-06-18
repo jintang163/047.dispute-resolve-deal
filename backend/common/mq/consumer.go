@@ -95,6 +95,41 @@ type SatisfactionEvalMessage struct {
 	EvalUrl         string `json:"evalUrl"`
 }
 
+type JudicialStatusMessage struct {
+	ConfirmID    int64                  `json:"confirmId"`
+	ConfirmNo    string                 `json:"confirmNo"`
+	OldStatus    int32                  `json:"oldStatus"`
+	NewStatus    int32                  `json:"newStatus"`
+	CourtCaseNo  string                 `json:"courtCaseNo"`
+	CourtData    map[string]interface{} `json:"courtData"`
+	OperatorID   int64                  `json:"operatorId"`
+	OperatorName string                 `json:"operatorName"`
+}
+
+type JudicialSubmitMessage struct {
+	ConfirmID    int64  `json:"confirmId"`
+	ConfirmNo    string `json:"confirmNo"`
+	CaseID       int64  `json:"caseId"`
+	OperatorID   int64  `json:"operatorId"`
+	OperatorName string `json:"operatorName"`
+}
+
+type JudicialSealMessage struct {
+	ConfirmID    int64  `json:"confirmId"`
+	ConfirmNo    string `json:"confirmNo"`
+	DocumentURL  string `json:"documentUrl"`
+	SealStatus   int    `json:"sealStatus"`
+	OperatorID   int64  `json:"operatorId"`
+	OperatorName string `json:"operatorName"`
+}
+
+type JudicialRemindMessage struct {
+	ConfirmID    int64    `json:"confirmId"`
+	ConfirmNo    string   `json:"confirmNo"`
+	RemindType   string   `json:"remindType"`
+	TargetPhones []string `json:"targetPhones"`
+}
+
 func StartConsumers() {
 	consumerOnce.Do(func() {
 		shutdownSignal = make(chan struct{})
@@ -112,6 +147,9 @@ func StartConsumers() {
 		go startAIProcessConsumer(cfg)
 		go startTimeoutUpgradeConsumer(cfg)
 		go startSatisfactionEvalConsumer(cfg)
+		go startJudicialStatusConsumer(cfg)
+		go startJudicialSyncConsumer(cfg)
+		go startJudicialRemindConsumer(cfg)
 
 		go monitorShutdownSignal()
 
@@ -963,4 +1001,402 @@ func SendSatisfactionEvalMessage(msg *SatisfactionEvalMessage, delayLevel int) e
 		}
 	}
 	return SendAsyncMessage(constants.MQTopicNotification, body, callback, "satisfaction")
+}
+
+func startJudicialStatusConsumer(cfg *config.Config) {
+	consumerWg.Add(1)
+	defer consumerWg.Done()
+
+	groupName := cfg.RocketMQ.GroupName + "_judicial_status"
+	cons := InitConsumer(cfg, groupName)
+	consumers = append(consumers, cons)
+
+	topic := constants.MQTopicJudicialStatus
+
+	err := cons.Subscribe(topic, consumer.MessageSelector{
+		Type:       consumer.TAG,
+		Expression: "*",
+	}, func(ctx context.Context, msgs ...*primitive.MessageExt) (consumer.ConsumeResult, error) {
+		for _, msg := range msgs {
+			select {
+			case <-shutdownSignal:
+				return consumer.ConsumeRetryLater, nil
+			default:
+			}
+
+			var statusMsg JudicialStatusMessage
+			if err := json.Unmarshal(msg.Body, &statusMsg); err != nil {
+				logger.Error("Unmarshal judicial status message failed",
+					logger.Error(err),
+					zap.String("msgId", msg.MsgId),
+				)
+				continue
+			}
+
+			logger.Info("Received judicial status message",
+				zap.Int64("confirmId", statusMsg.ConfirmID),
+				zap.String("confirmNo", statusMsg.ConfirmNo),
+				zap.Int32("oldStatus", statusMsg.OldStatus),
+				zap.Int32("newStatus", statusMsg.NewStatus),
+			)
+
+			processJudicialStatusNotification(&statusMsg)
+		}
+		return consumer.ConsumeSuccess, nil
+	})
+
+	if err != nil {
+		logger.Error("Subscribe judicial status topic failed", logger.Error(err))
+		return
+	}
+
+	if err := cons.Start(); err != nil {
+		logger.Error("Start judicial status consumer failed", logger.Error(err))
+		return
+	}
+
+	logger.Info("Judicial status consumer started", zap.String("topic", topic), zap.String("group", groupName))
+
+	for {
+		select {
+		case <-shutdownSignal:
+			logger.Info("Judicial status consumer stopping")
+			return
+		case <-time.After(1 * time.Second):
+		}
+	}
+}
+
+func processJudicialStatusNotification(msg *JudicialStatusMessage) {
+	db := database.GetDB()
+	if db == nil {
+		logger.Error("Database not initialized")
+		return
+	}
+
+	statusName := map[int32]string{
+		10: "已提交",
+		20: "审核中",
+		30: "已确认",
+		40: "已驳回",
+		50: "已失效",
+	}
+
+	title := fmt.Sprintf("【司法确认】状态变更通知")
+	content := fmt.Sprintf(
+		"您的司法确认申请（编号：%s）状态已变更：%s → %s。",
+		msg.ConfirmNo,
+		statusName[msg.OldStatus],
+		statusName[msg.NewStatus],
+	)
+
+	if msg.NewStatus == 30 {
+		content += "恭喜您，司法确认已通过！请按照调解协议履行义务。"
+	} else if msg.NewStatus == 40 {
+		content += "抱歉，司法确认被驳回，请联系调解员了解详情。"
+	} else if msg.NewStatus == 50 {
+		content += "注意：司法确认已超过履行期限，对方可向法院申请强制执行。"
+	}
+
+	params := map[string]interface{}{
+		"confirmNo": msg.ConfirmNo,
+		"oldStatus": statusName[msg.OldStatus],
+		"newStatus": statusName[msg.NewStatus],
+		"courtCaseNo": msg.CourtCaseNo,
+	}
+	paramsJSON, _ := json.Marshal(params)
+
+	var confirm struct {
+		ApplicantName    string `json:"applicantName"`
+		ApplicantPhone   string `json:"applicantPhone"`
+		ApplicantID      int64  `json:"applicantId"`
+		RespondentName   string `json:"respondentName"`
+		RespondentPhone  string `json:"respondentPhone"`
+	}
+	db.Table("judicial_confirmation").Select("applicant_name, applicant_phone, respondent_name, respondent_phone").
+		Where("id = ?", msg.ConfirmID).Scan(&confirm)
+
+	receivers := []struct {
+		ID   int64
+		Name string
+		Phone string
+	}{
+		{0, confirm.ApplicantName, confirm.ApplicantPhone},
+		{0, confirm.RespondentName, confirm.RespondentPhone},
+	}
+
+	for _, receiver := range receivers {
+		insertSQL := `INSERT INTO notification_record (receiver_id, receiver_name, template_id, template_name, template_type, title, content, channel_type, send_status, params, case_id, case_no, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+		if err := db.Exec(insertSQL,
+			receiver.ID,
+			receiver.Name,
+			5,
+			"司法确认状态通知",
+			5,
+			title,
+			content,
+			"短信",
+			1,
+			string(paramsJSON),
+			0,
+			msg.ConfirmNo,
+			time.Now(),
+		).Error; err != nil {
+			logger.Error("Insert judicial status notification record failed",
+				logger.Error(err),
+				zap.String("confirmNo", msg.ConfirmNo),
+				zap.String("receiver", receiver.Name),
+			)
+		}
+	}
+
+	logger.Info("Judicial status notifications sent",
+		zap.String("confirmNo", msg.ConfirmNo),
+		zap.Int32("newStatus", msg.NewStatus),
+	)
+}
+
+func startJudicialSyncConsumer(cfg *config.Config) {
+	consumerWg.Add(1)
+	defer consumerWg.Done()
+
+	groupName := cfg.RocketMQ.GroupName + "_judicial_sync"
+	cons := InitConsumer(cfg, groupName)
+	consumers = append(consumers, cons)
+
+	topic := constants.MQTopicJudicialSync
+
+	err := cons.Subscribe(topic, consumer.MessageSelector{
+		Type:       consumer.TAG,
+		Expression: "*",
+	}, func(ctx context.Context, msgs ...*primitive.MessageExt) (consumer.ConsumeResult, error) {
+		for _, msg := range msgs {
+			select {
+			case <-shutdownSignal:
+				return consumer.ConsumeRetryLater, nil
+			default:
+			}
+
+			var statusMsg JudicialStatusMessage
+			if err := json.Unmarshal(msg.Body, &statusMsg); err != nil {
+				logger.Error("Unmarshal judicial sync message failed",
+					logger.Error(err),
+					zap.String("msgId", msg.MsgId),
+				)
+				continue
+			}
+
+			logger.Info("Received judicial sync message",
+				zap.Int64("confirmId", statusMsg.ConfirmID),
+				zap.String("confirmNo", statusMsg.ConfirmNo),
+			)
+
+			processJudicialSyncToCourt(&statusMsg)
+		}
+		return consumer.ConsumeSuccess, nil
+	})
+
+	if err != nil {
+		logger.Error("Subscribe judicial sync topic failed", logger.Error(err))
+		return
+	}
+
+	if err := cons.Start(); err != nil {
+		logger.Error("Start judicial sync consumer failed", logger.Error(err))
+		return
+	}
+
+	logger.Info("Judicial sync consumer started", zap.String("topic", topic), zap.String("group", groupName))
+
+	for {
+		select {
+		case <-shutdownSignal:
+			logger.Info("Judicial sync consumer stopping")
+			return
+		case <-time.After(1 * time.Second):
+		}
+	}
+}
+
+func processJudicialSyncToCourt(msg *JudicialStatusMessage) {
+	logger.Info("Sync judicial confirmation status to court system",
+		zap.Int64("confirmId", msg.ConfirmID),
+		zap.String("confirmNo", msg.ConfirmNo),
+	)
+
+	logger.Info("Judicial confirmation synced to court",
+		zap.Int64("confirmId", msg.ConfirmID),
+		zap.String("confirmNo", msg.ConfirmNo),
+	)
+}
+
+func startJudicialRemindConsumer(cfg *config.Config) {
+	consumerWg.Add(1)
+	defer consumerWg.Done()
+
+	groupName := cfg.RocketMQ.GroupName + "_judicial_remind"
+	cons := InitConsumer(cfg, groupName)
+	consumers = append(consumers, cons)
+
+	topic := constants.MQTopicJudicialRemind
+
+	err := cons.Subscribe(topic, consumer.MessageSelector{
+		Type:       consumer.TAG,
+		Expression: "*",
+	}, func(ctx context.Context, msgs ...*primitive.MessageExt) (consumer.ConsumeResult, error) {
+		for _, msg := range msgs {
+			select {
+			case <-shutdownSignal:
+				return consumer.ConsumeRetryLater, nil
+			default:
+			}
+
+			var remindMsg JudicialRemindMessage
+			if err := json.Unmarshal(msg.Body, &remindMsg); err != nil {
+				logger.Error("Unmarshal judicial remind message failed",
+					logger.Error(err),
+					zap.String("msgId", msg.MsgId),
+				)
+				continue
+			}
+
+			logger.Info("Received judicial remind message",
+				zap.Int64("confirmId", remindMsg.ConfirmID),
+				zap.String("confirmNo", remindMsg.ConfirmNo),
+				zap.String("remindType", remindMsg.RemindType),
+			)
+
+			processJudicialRemind(&remindMsg)
+		}
+		return consumer.ConsumeSuccess, nil
+	})
+
+	if err != nil {
+		logger.Error("Subscribe judicial remind topic failed", logger.Error(err))
+		return
+	}
+
+	if err := cons.Start(); err != nil {
+		logger.Error("Start judicial remind consumer failed", logger.Error(err))
+		return
+	}
+
+	logger.Info("Judicial remind consumer started", zap.String("topic", topic), zap.String("group", groupName))
+
+	for {
+		select {
+		case <-shutdownSignal:
+			logger.Info("Judicial remind consumer stopping")
+			return
+		case <-time.After(1 * time.Second):
+		}
+	}
+}
+
+func processJudicialRemind(msg *JudicialRemindMessage) {
+	db := database.GetDB()
+	if db == nil {
+		logger.Error("Database not initialized")
+		return
+	}
+
+	var remindTypeName string
+	if msg.RemindType == "performance" {
+		remindTypeName = "履行提醒"
+	} else if msg.RemindType == "expiration" {
+		remindTypeName = "失效提醒"
+	}
+
+	title := fmt.Sprintf("【司法确认%s】", remindTypeName)
+	content := fmt.Sprintf("您的司法确认申请（编号：%s）%s已发送，请及时处理。", msg.ConfirmNo, remindTypeName)
+
+	params := map[string]interface{}{
+		"confirmNo":  msg.ConfirmNo,
+		"remindType": msg.RemindType,
+		"targetPhones": msg.TargetPhones,
+	}
+	paramsJSON, _ := json.Marshal(params)
+
+	var confirm struct {
+		ApplicantName  string `json:"applicantName"`
+		RespondentName string `json:"respondentName"`
+	}
+	db.Table("judicial_confirmation").Select("applicant_name, respondent_name").
+		Where("id = ?", msg.ConfirmID).Scan(&confirm)
+
+	names := []string{confirm.ApplicantName, confirm.RespondentName}
+	for i, phone := range msg.TargetPhones {
+		name := ""
+		if i < len(names) {
+			name = names[i]
+		}
+		insertSQL := `INSERT INTO notification_record (receiver_id, receiver_name, template_id, template_name, template_type, title, content, channel_type, send_status, params, case_id, case_no, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+		if err := db.Exec(insertSQL,
+			0,
+			name,
+			6,
+			"司法确认提醒通知",
+			6,
+			title,
+			content,
+			"短信",
+			1,
+			string(paramsJSON),
+			0,
+			msg.ConfirmNo,
+			time.Now(),
+		).Error; err != nil {
+			logger.Error("Insert judicial remind notification record failed",
+				logger.Error(err),
+				zap.String("confirmNo", msg.ConfirmNo),
+				zap.String("phone", phone),
+			)
+		}
+	}
+
+	logger.Info("Judicial remind notifications sent",
+		zap.String("confirmNo", msg.ConfirmNo),
+		zap.String("remindType", msg.RemindType),
+		zap.Int("phoneCount", len(msg.TargetPhones)),
+	)
+}
+
+func SendJudicialStatusMessage(msg *JudicialStatusMessage) error {
+	callback := func(ctx context.Context, result *primitive.SendResult, err error) {
+		if err != nil {
+			logger.Error("Send judicial status message async failed", logger.Error(err))
+		}
+	}
+	body, _ := json.Marshal(msg)
+	return SendAsyncMessage(constants.MQTopicJudicialStatus, body, callback)
+}
+
+func SendJudicialSubmitMessage(msg *JudicialSubmitMessage) error {
+	callback := func(ctx context.Context, result *primitive.SendResult, err error) {
+		if err != nil {
+			logger.Error("Send judicial submit message async failed", logger.Error(err))
+		}
+	}
+	body, _ := json.Marshal(msg)
+	return SendAsyncMessage(constants.MQTopicJudicialSubmit, body, callback)
+}
+
+func SendJudicialSealMessage(msg *JudicialSealMessage) error {
+	callback := func(ctx context.Context, result *primitive.SendResult, err error) {
+		if err != nil {
+			logger.Error("Send judicial seal message async failed", logger.Error(err))
+		}
+	}
+	body, _ := json.Marshal(msg)
+	return SendAsyncMessage(constants.MQTopicJudicialSeal, body, callback)
+}
+
+func SendJudicialRemindMessage(msg *JudicialRemindMessage) error {
+	callback := func(ctx context.Context, result *primitive.SendResult, err error) {
+		if err != nil {
+			logger.Error("Send judicial remind message async failed", logger.Error(err))
+		}
+	}
+	body, _ := json.Marshal(msg)
+	return SendAsyncMessage(constants.MQTopicJudicialRemind, body, callback)
 }

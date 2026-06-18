@@ -12,6 +12,9 @@ import Dashboard from './pages/Stats/Dashboard';
 import UserList from './pages/System/UserList';
 import OrgList from './pages/System/OrgList';
 import Performance from './pages/Performance/Index';
+import JudicialList from './pages/Judicial/List';
+import JudicialDetail from './pages/Judicial/Detail';
+import CourtConfig from './pages/Judicial/CourtConfig';
 import { getToken } from './utils/auth';
 import { useUserStore } from './stores/user';
 
@@ -63,6 +66,13 @@ const App: React.FC = () => {
             <Route path="orgs" element={<OrgList />} />
           </Route>
           <Route path="performance" element={<Performance />} />
+          <Route path="judicial">
+            <Route index element={<JudicialList />} />
+            <Route path=":id" element={<JudicialDetail />} />
+          </Route>
+          <Route path="court">
+            <Route path="config" element={<CourtConfig />} />
+          </Route>
         </Route>
         <Route path="*" element={<Navigate to="/dashboard" replace />} />
       </Routes>

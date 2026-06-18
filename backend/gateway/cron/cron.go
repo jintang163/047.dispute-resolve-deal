@@ -13,6 +13,7 @@ import (
 	"github.com/dispute-resolve/common/logger"
 	"github.com/dispute-resolve/common/mq"
 	"github.com/dispute-resolve/common/model"
+	"github.com/dispute-resolve/gateway/service"
 
 	"github.com/robfig/cron/v3"
 	"go.uber.org/zap"
@@ -31,6 +32,7 @@ const (
 	LockExpireES        = 300 * time.Second
 	LockExpireStats     = 600 * time.Second
 	LockExpireSatisfy   = 600 * time.Second
+	LockExpireJudicial  = 600 * time.Second
 )
 
 func StartCronTasks() {
@@ -47,6 +49,8 @@ func StartCronTasks() {
 		addCronTask("0 */5 * * * ?", syncESIndexTask, "sync_es_index")
 		addCronTask("0 0 0 * * ?", dailyStatsCacheTask, "daily_stats_cache")
 		addCronTask("0 */10 * * * ?", checkSatisfactionEvalTask, "check_satisfaction_eval")
+		addCronTask("0 0 9 * * ?", judicialPerformanceReminderTask, "judicial_performance_reminder")
+		addCronTask("0 0 9 * * ?", judicialExpirationReminderTask, "judicial_expiration_reminder")
 
 		cronInstance.Start()
 		logger.Info("All cron tasks started", zap.Int("taskCount", len(entryIDs)))
@@ -773,6 +777,110 @@ func checkSatisfactionEvalTask() {
 	elapsed := time.Since(startTime)
 	logger.Info("Check satisfaction eval task completed",
 		zap.Int("sentCount", len(cases)),
+		zap.Duration("elapsed", elapsed),
+	)
+}
+
+func judicialPerformanceReminderTask() {
+	ctx := context.Background()
+	lockKey := constants.RedisKeyPrefixLock + "cron:judicial_performance_reminder"
+
+	locked, err := acquireLock(ctx, lockKey, LockExpireJudicial)
+	if err != nil || !locked {
+		logger.Debug("Skip judicial performance reminder task, lock not acquired")
+		return
+	}
+	defer releaseLock(ctx, lockKey)
+
+	logger.Info("Starting judicial performance reminder task")
+	startTime := time.Now()
+
+	judicialService := service.JudicialConfirmationServiceInst()
+	if judicialService == nil {
+		logger.Error("JudicialConfirmationService not initialized")
+		return
+	}
+
+	confirmations, err := judicialService.CheckPerformanceDeadline(ctx, 7)
+	if err != nil {
+		logger.Error("Check performance deadline failed", logger.Error(err))
+		return
+	}
+
+	logger.Info("Found confirmations need performance reminder", zap.Int("count", len(confirmations)))
+
+	remindedCount := 0
+	for _, conf := range confirmations {
+		if err := judicialService.SendPerformanceReminder(ctx, conf.ID); err != nil {
+			logger.Warn("Send performance reminder failed",
+				zap.Int64("confirmId", conf.ID),
+				zap.String("confirmNo", conf.ConfirmNo),
+				logger.Error(err),
+			)
+			continue
+		}
+		remindedCount++
+		logger.Info("Sent performance reminder",
+			zap.Int64("confirmId", conf.ID),
+			zap.String("confirmNo", conf.ConfirmNo),
+		)
+	}
+
+	elapsed := time.Since(startTime)
+	logger.Info("Judicial performance reminder task completed",
+		zap.Int("remindedCount", remindedCount),
+		zap.Duration("elapsed", elapsed),
+	)
+}
+
+func judicialExpirationReminderTask() {
+	ctx := context.Background()
+	lockKey := constants.RedisKeyPrefixLock + "cron:judicial_expiration_reminder"
+
+	locked, err := acquireLock(ctx, lockKey, LockExpireJudicial)
+	if err != nil || !locked {
+		logger.Debug("Skip judicial expiration reminder task, lock not acquired")
+		return
+	}
+	defer releaseLock(ctx, lockKey)
+
+	logger.Info("Starting judicial expiration reminder task")
+	startTime := time.Now()
+
+	judicialService := service.JudicialConfirmationServiceInst()
+	if judicialService == nil {
+		logger.Error("JudicialConfirmationService not initialized")
+		return
+	}
+
+	confirmations, err := judicialService.CheckExpiredConfirmations(ctx)
+	if err != nil {
+		logger.Error("Check expired confirmations failed", logger.Error(err))
+		return
+	}
+
+	logger.Info("Found expired confirmations", zap.Int("count", len(confirmations)))
+
+	remindedCount := 0
+	for _, conf := range confirmations {
+		if err := judicialService.SendExpirationReminder(ctx, conf.ID); err != nil {
+			logger.Warn("Send expiration reminder failed",
+				zap.Int64("confirmId", conf.ID),
+				zap.String("confirmNo", conf.ConfirmNo),
+				logger.Error(err),
+			)
+			continue
+		}
+		remindedCount++
+		logger.Info("Sent expiration reminder",
+			zap.Int64("confirmId", conf.ID),
+			zap.String("confirmNo", conf.ConfirmNo),
+		)
+	}
+
+	elapsed := time.Since(startTime)
+	logger.Info("Judicial expiration reminder task completed",
+		zap.Int("remindedCount", remindedCount),
 		zap.Duration("elapsed", elapsed),
 	)
 }

@@ -12,6 +12,10 @@ import com.dispute.app.pages.AIConsultPage
 import com.dispute.app.pages.CaseDetailPage
 import com.dispute.app.pages.CaseListPage
 import com.dispute.app.pages.HomePage
+import com.dispute.app.pages.JudicialApplyPage
+import com.dispute.app.pages.JudicialDetailPage
+import com.dispute.app.pages.JudicialListPage
+import com.dispute.app.pages.JudicialQueryPage
 import com.dispute.app.pages.LoginPage
 import com.dispute.app.pages.ProfilePage
 import com.dispute.app.pages.ProgressPage
@@ -86,6 +90,10 @@ private fun AppContent(router: Router, appState: AppState) {
         is Route.AIConsult -> AIConsultPage()
         is Route.Satisfaction -> SatisfactionPage(currentRoute.caseNumber)
         is Route.Profile -> ProfilePage()
+        is Route.JudicialList -> JudicialListPage()
+        is Route.JudicialDetail -> JudicialDetailPage(currentRoute.id)
+        is Route.JudicialApply -> JudicialApplyPage()
+        is Route.JudicialQuery -> JudicialQueryPage()
     }
 
     if (appState.isLoading.value) {

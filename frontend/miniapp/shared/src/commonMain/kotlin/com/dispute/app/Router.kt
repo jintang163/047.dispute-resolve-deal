@@ -27,6 +27,10 @@ sealed class Route {
     object AIConsult : Route()
     data class Satisfaction(val caseNumber: String) : Route()
     object Profile : Route()
+    object JudicialList : Route()
+    data class JudicialDetail(val id: Long) : Route()
+    object JudicialApply : Route()
+    object JudicialQuery : Route()
 }
 
 val LocalRouter: ProvidableCompositionLocal<Router> = staticCompositionLocalOf {

@@ -77,6 +77,7 @@ const (
 	RedisKeyPrefixLock      = "lock:"
 	RedisKeyPrefixRateLimit = "ratelimit:"
 	RedisKeyPrefixQueue     = "queue:"
+	RedisKeyPrefixJudicial  = "judicial:"
 
 	RedisExpireToken     = 86400
 	RedisExpireUser      = 3600
@@ -92,6 +93,11 @@ const (
 	MQTopicNotification   = "dispute_notification"
 	MQTopicDeadLetter     = "dispute_dead_letter"
 	MQTopicAIProcess      = "dispute_ai_process"
+	MQTopicJudicialSubmit = "judicial_confirmation_submit"
+	MQTopicJudicialStatus = "judicial_confirmation_status"
+	MQTopicJudicialSync   = "judicial_confirmation_sync"
+	MQTopicJudicialSeal   = "judicial_confirmation_seal"
+	MQTopicJudicialRemind = "judicial_confirmation_remind"
 
 	MQTagAll     = "*"
 	MQTagSms     = "sms"
@@ -108,6 +114,7 @@ const (
 	MinIOPathDocument    = "document"
 	MinIOPathSignature   = "signature"
 	MinIOPathAvatar      = "avatar"
+	MinIOPathJudicial    = "judicial"
 
 	AITypeSummary   = 1
 	AITypeSuggestion = 2
@@ -152,4 +159,25 @@ var ApprovalActionMap = map[int]string{
 	ApprovalActionAddSign:  "加签",
 	ApprovalActionTransfer: "转审",
 	ApprovalActionRefuse:   "拒绝",
+}
+
+var JudicialStatusMap = map[int]string{
+	10: "已提交",
+	20: "审核中",
+	30: "已确认",
+	40: "已驳回",
+	50: "已失效",
+}
+
+var JudicialActionTypeMap = map[int]string{
+	10: "提交申请",
+	20: "法院受理",
+	30: "审核通过",
+	40: "审核驳回",
+	50: "已签章",
+	60: "确认书送达",
+	70: "履行提醒",
+	80: "失效提醒",
+	90: "已履行",
+	99: "已失效",
 }

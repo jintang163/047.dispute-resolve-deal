@@ -18,6 +18,7 @@ type Config struct {
 	DeepSeek     DeepSeekConfig     `mapstructure:"deepseek"`
 	Milvus       MilvusConfig       `mapstructure:"milvus"`
 	Flowable     FlowableConfig     `mapstructure:"flowable"`
+	Court        CourtConfig        `mapstructure:"court"`
 	Services     ServicesConfig     `mapstructure:"services"`
 	ServicePorts ServicePortsConfig `mapstructure:"service-ports"`
 }
@@ -136,6 +137,13 @@ type FlowableConfig struct {
 	BaseURL  string `mapstructure:"base_url"`
 	Username string `mapstructure:"username"`
 	Password string `mapstructure:"password"`
+}
+
+type CourtConfig struct {
+	APIEndpoint string `mapstructure:"api_endpoint"`
+	APIAppID    string `mapstructure:"api_app_id"`
+	APISecret   string `mapstructure:"api_secret"`
+	APIPublicKey string `mapstructure:"api_public_key"`
 }
 
 var (

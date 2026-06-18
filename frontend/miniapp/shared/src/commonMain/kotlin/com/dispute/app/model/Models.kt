@@ -363,4 +363,207 @@ object MockData {
             timestamp = "2024-12-03 14:00:00"
         )
     )
+
+    val mockJudicialConfirmations: List<JudicialConfirmation> = listOf(
+        JudicialConfirmation(
+            id = 1,
+            confirmNo = "SF000120241215000001",
+            caseId = 1,
+            caseNo = "JF202412010001",
+            caseTitle = "张三与某某科技有限公司工资报酬纠纷",
+            status = JudicialConfirmation.Status.CONFIRMED,
+            statusText = "已确认",
+            applicantName = "张三",
+            applicantPhone = "13800138000",
+            respondentName = "某某科技有限公司",
+            respondentPhone = "010-12345678",
+            courtId = 1,
+            courtName = "某某区人民法院",
+            agreementContent = "1. 被申请人于2024年12月31日前支付申请人工资54000元；\n2. 双方解除劳动关系，申请人不再主张其他权利。",
+            performanceDeadline = "2024-12-31",
+            confirmAmount = 54000.00,
+            documentUrl = "https://example.com/doc/confirm1.pdf",
+            sealTime = "2024-12-15 14:30:00",
+            createTime = "2024-12-15 10:00:00",
+            daysLeft = 10
+        ),
+        JudicialConfirmation(
+            id = 2,
+            confirmNo = "SF000120241210000002",
+            caseId = 3,
+            caseNo = "JF202411150003",
+            caseTitle = "张三与某某电子产品店退换货纠纷",
+            status = JudicialConfirmation.Status.REVIEWING,
+            statusText = "审核中",
+            applicantName = "张三",
+            applicantPhone = "13800138000",
+            respondentName = "某某电子产品店",
+            respondentPhone = "010-87654321",
+            courtId = 1,
+            courtName = "某某区人民法院",
+            agreementContent = "1. 被申请人为申请人更换同款手机一部；\n2. 申请人放弃其他赔偿请求。",
+            performanceDeadline = "2024-12-25",
+            confirmAmount = 0.00,
+            courtCaseNo = "2024京0101确调00123号",
+            createTime = "2024-12-10 15:20:00",
+            daysLeft = 4
+        )
+    )
+
+    val mockCourtOptions: List<CourtOption> = listOf(
+        CourtOption(
+            id = 1,
+            name = "北京市朝阳区人民法院",
+            address = "北京市朝阳区朝阳公园南路甲2号",
+            phone = "010-85999888"
+        ),
+        CourtOption(
+            id = 2,
+            name = "北京市海淀区人民法院",
+            address = "北京市海淀区丹棱街12号",
+            phone = "010-62697000"
+        ),
+        CourtOption(
+            id = 3,
+            name = "北京市西城区人民法院",
+            address = "北京市西城区后英房胡同1号",
+            phone = "010-82299277"
+        ),
+        CourtOption(
+            id = 4,
+            name = "北京市东城区人民法院",
+            address = "北京市东城区交道口东大街1号",
+            phone = "010-64031381"
+        ),
+        CourtOption(
+            id = 5,
+            name = "北京市丰台区人民法院",
+            address = "北京市丰台区近园路9号",
+            phone = "010-83836068"
+        ),
+        CourtOption(
+            id = 6,
+            name = "北京市石景山区人民法院",
+            address = "北京市石景山区阜石路169号",
+            phone = "010-68899888"
+        ),
+        CourtOption(
+            id = 7,
+            name = "北京市通州区人民法院",
+            address = "北京市通州区梨园北街187号",
+            phone = "010-81553500"
+        ),
+        CourtOption(
+            id = 8,
+            name = "北京市大兴区人民法院",
+            address = "北京市大兴区黄村镇金星西路8号",
+            phone = "010-57362870"
+        )
+    )
 }
+
+@Serializable
+data class JudicialConfirmation(
+    val id: Long,
+    val confirmNo: String,
+    val caseId: Long,
+    val caseNo: String,
+    val caseTitle: String,
+    val status: Status,
+    val statusText: String,
+    val applicantName: String,
+    val applicantPhone: String,
+    val respondentName: String,
+    val respondentPhone: String,
+    val courtId: Long,
+    val courtName: String,
+    val agreementContent: String,
+    val performanceDeadline: String? = null,
+    val confirmAmount: Double? = null,
+    val courtCaseNo: String? = null,
+    val documentNo: String? = null,
+    val documentUrl: String? = null,
+    val sealTime: String? = null,
+    val performanceRemindTime: String? = null,
+    val expirationRemindTime: String? = null,
+    val fulfilledTime: String? = null,
+    val remark: String? = null,
+    val createTime: String,
+    val updateTime: String? = null,
+    val daysLeft: Int? = null
+) {
+    enum class Status(val displayName: String, val color: Long) {
+        SUBMITTED("已提交", 0xFF9CA3AF),
+        REVIEWING("审核中", 0xFFF59E0B),
+        CONFIRMED("已确认", 0xFF22C55E),
+        REJECTED("已驳回", 0xFFEF4444),
+        EXPIRED("已失效", 0xFFF97316)
+    }
+
+    val statusColor: Long
+        get() = status.color
+
+    val isExpired: Boolean
+        get() = daysLeft != null && daysLeft <= 0
+
+    val isWarning: Boolean
+        get() = daysLeft != null && daysLeft in 1..7
+}
+
+@Serializable
+data class JudicialConfirmLog(
+    val id: Long,
+    val confirmId: Long,
+    val confirmNo: String,
+    val actionType: Int,
+    val actionTypeName: String,
+    val operatorId: Long? = null,
+    val operatorName: String? = null,
+    val operatorType: Int,
+    val operatorTypeName: String,
+    val remark: String? = null,
+    val detail: String? = null,
+    val createTime: String
+)
+
+@Serializable
+data class CourtOption(
+    val id: Long,
+    val courtName: String
+)
+
+@Serializable
+data class CreateJudicialRequest(
+    val caseId: Long,
+    val caseNo: String? = null,
+    val caseTitle: String? = null,
+    val mediationRecordId: Long? = null,
+    val protocolId: Long? = null,
+    val applicantName: String,
+    val applicantPhone: String,
+    val applicantIdCard: String? = null,
+    val applicantAddress: String? = null,
+    val respondentName: String,
+    val respondentPhone: String,
+    val respondentIdCard: String? = null,
+    val respondentAddress: String? = null,
+    val courtId: Long,
+    val courtName: String? = null,
+    val agreementContent: String,
+    val performanceDeadline: String? = null,
+    val confirmAmount: Double? = null,
+    val remark: String? = null
+)
+
+@Serializable
+data class CreateJudicialResponse(
+    val confirmNo: String
+)
+
+@Serializable
+data class CourtOption(
+    val id: Long,
+    val name: String,
+    val address: String? = null,
+    val phone: String? = null
+)

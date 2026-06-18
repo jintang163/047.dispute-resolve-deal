@@ -57,6 +57,11 @@ func GenerateConsultNo() string {
 	return fmt.Sprintf("ZX%s%08d", now.Format("20060102"), GenerateID()%100000000)
 }
 
+func GenerateConfirmNo(orgID int64) string {
+	now := time.Now()
+	return fmt.Sprintf("SF%04d%s%06d", orgID%10000, now.Format("20060102"), GenerateID()%1000000)
+}
+
 func GenerateIDStr() string {
 	return strconv.FormatInt(GenerateID(), 10)
 }

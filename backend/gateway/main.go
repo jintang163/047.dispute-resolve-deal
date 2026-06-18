@@ -34,6 +34,8 @@ func main() {
 		EnableFlowable: true,
 		EnableAI:       true,
 		EnableMilvus:   true,
+		EnableMinIO:    true,
+		EnableCourt:    true,
 		LogLevel:       "info",
 	})
 	defer initResult.Stop()
@@ -65,6 +67,7 @@ func main() {
 	dispatchService := impl.NewDispatchService()
 	videoService := impl.NewVideoService()
 	esignService := impl.NewESignService()
+	judicialConfirmationService := impl.NewJudicialConfirmationService()
 
 	service.InitServices(
 		userService,
@@ -78,6 +81,7 @@ func main() {
 		dispatchService,
 		videoService,
 		esignService,
+		judicialConfirmationService,
 	)
 
 	rpc.InitRPCClients()
