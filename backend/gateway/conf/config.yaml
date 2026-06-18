@@ -1,0 +1,81 @@
+server:
+  host: "0.0.0.0"
+  port: 8080
+  mode: "dev"
+  name: "dispute-gateway"
+
+database:
+  host: "127.0.0.1"
+  port: 4000
+  user: "root"
+  password: ""
+  dbname: "dispute_resolve"
+  charset: "utf8mb4"
+  max_idle: 20
+  max_open: 100
+
+redis:
+  host: "127.0.0.1"
+  port: 6379
+  password: ""
+  db: 0
+  pool_size: 100
+  cluster: false
+  addrs: []
+
+elasticsearch:
+  addresses:
+    - "http://127.0.0.1:9200"
+  username: ""
+  password: ""
+
+rocketmq:
+  nameserver:
+    - "127.0.0.1:9876"
+  group_name: "dispute-gateway-group"
+  retry_times: 3
+
+jwt:
+  secret: "dispute-resolve-jwt-secret-2024"
+  expire_time: 86400
+  issuer: "dispute-resolve"
+
+minio:
+  endpoint: "127.0.0.1:9000"
+  access_key: "minioadmin"
+  secret_key: "minioadmin"
+  use_ssl: false
+  bucket: "dispute"
+
+deepseek:
+  api_key: "sk-your-deepseek-api-key"
+  base_url: "https://api.deepseek.com"
+  model: "deepseek-chat"
+  max_tokens: 4096
+  temperature: 0.7
+
+milvus:
+  address: "127.0.0.1:19530"
+  username: ""
+  password: ""
+  collection: "law_articles"
+  dimension: 1536
+
+flowable:
+  base_url: "http://127.0.0.1:8080/flowable-task"
+  username: "admin"
+  password: "test"
+
+services:
+  user-service: "127.0.0.1:9001"
+  dispute-service: "127.0.0.1:9002"
+  workflow-service: "127.0.0.1:9003"
+  ai-service: "127.0.0.1:9004"
+  notification-service: "127.0.0.1:9005"
+
+service-ports:
+  user: 9001
+  dispute: 9002
+  workflow: 9003
+  ai: 9004
+  notification: 9005
