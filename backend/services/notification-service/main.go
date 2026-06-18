@@ -1,11 +1,9 @@
 package main
 
 import (
-	"log"
 	"net"
 
-	"github.com/dispute-resolve/common/config"
-	"github.com/dispute-resolve/common/database"
+	"github.com/dispute-resolve/common/bootstrap"
 	"github.com/dispute-resolve/common/logger"
 	notification "github.com/dispute-resolve/notification-service/kitex_gen/notification/notificationservice"
 
@@ -14,14 +12,15 @@ import (
 )
 
 func main() {
-	if err := config.LoadConfig("../../config/config.yaml"); err != nil {
-		log.Fatalf("Load config failed: %v", err)
-	}
+	initResult := bootstrap.InitServiceWithOptions(bootstrap.InitOptions{
+		ConfigPath:  "../../config/config.yaml",
+		ServiceName: "notification-service",
+		EnableRedis: true,
+		LogLevel:    "info",
+	})
+	defer initResult.Stop()
 
-	logger.InitLogger("notification-service")
-	database.InitDB()
-
-	port := config.GlobalConfig.ServicePorts.Notification
+	port := bootstrap.GetServicePort("notification-service")
 	svr := notification.NewServer(new(NotificationServiceImpl),
 		server.WithServerBasicInfo(&rpcinfo.EndpointBasicInfo{ServiceName: "notification-service"}),
 		server.WithServiceAddr(&net.TCPAddr{Port: port}),

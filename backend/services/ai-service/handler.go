@@ -3,20 +3,24 @@ package main
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
+	"github.com/dispute-resolve/common/ai"
 	"github.com/dispute-resolve/common/database"
 	"github.com/dispute-resolve/common/logger"
 	"github.com/dispute-resolve/common/model"
 	"github.com/dispute-resolve/common/utils"
-	ai "github.com/dispute-resolve/ai-service/kitex_gen/ai"
+	"github.com/dispute-resolve/common/vector"
+	ai_kitex "github.com/dispute-resolve/ai-service/kitex_gen/ai"
+	"go.uber.org/zap"
 )
 
 type AIServiceImpl struct{}
 
-func (s *AIServiceImpl) AIConsult(ctx context.Context, req *ai.AIConsultRequest) (resp *ai.AIConsultResponse, err error) {
-	resp = &ai.AIConsultResponse{Code: 0, Message: "success"}
+func (s *AIServiceImpl) AIConsult(ctx context.Context, req *ai_kitex.AIConsultRequest) (resp *ai_kitex.AIConsultResponse, err error) {
+	resp = &ai_kitex.AIConsultResponse{Code: 0, Message: "success"}
 
 	if strings.TrimSpace(req.Question) == "" {
 		resp.Code = 400
@@ -24,39 +28,65 @@ func (s *AIServiceImpl) AIConsult(ctx context.Context, req *ai.AIConsultRequest)
 		return resp, nil
 	}
 
-	similarResp, err := s.SearchSimilarLawArticles(ctx, &ai.SearchSimilarRequest{
-		Question: req.Question,
-		TopK:     5,
-	})
+	startTime := time.Now()
+
+	answer, err := ai.GetLegalAdvice(req.Question, nil)
 	if err != nil {
-		logger.Error("Search similar articles error", logger.Error(err))
+		logger.Error("Get legal advice failed",
+			zap.String("question", req.Question),
+			logger.Error(err),
+		)
+		resp.Code = 500
+		resp.Message = "获取法律建议失败"
+		return resp, nil
 	}
 
-	relatedArticles := make([]*ai.LawArticle, 0)
-	if similarResp != nil && len(similarResp.Articles) > 0 {
-		relatedArticles = similarResp.Articles
+	elapsed := time.Since(startTime).Milliseconds()
+
+	relatedArticles := make([]*ai_kitex.LawArticle, 0)
+	articleIDs := make([]string, 0)
+
+	if len(answer.RelatedArticles) > 0 {
+		for _, ref := range answer.RelatedArticles {
+			lawArticle := convertLawReferenceToKitex(ref)
+			relatedArticles = append(relatedArticles, lawArticle)
+			if lawArticle.Id > 0 {
+				articleIDs = append(articleIDs, fmt.Sprintf("%d", lawArticle.Id))
+			}
+		}
 	}
 
-	answer := s.generateAIAnswer(req.Question, relatedArticles)
+	if len(relatedArticles) == 0 {
+		similarResp, searchErr := s.SearchSimilarLawArticles(ctx, &ai_kitex.SearchSimilarRequest{
+			Question: req.Question,
+			TopK:     5,
+		})
+		if searchErr != nil {
+			logger.Warn("Search similar articles fallback failed", logger.Error(searchErr))
+		}
+		if similarResp != nil && len(similarResp.Articles) > 0 {
+			relatedArticles = similarResp.Articles
+		}
+	}
+
+	resp.Answer = answer.Answer
+	resp.RelatedArticles = relatedArticles
 
 	consult := &model.AIConsultRecord{
 		UserID:       req.UserId,
 		Question:     req.Question,
-		Answer:       answer,
-		ArticleIDs:   s.extractArticleIDs(relatedArticles),
+		Answer:       answer.Answer,
+		ArticleIDs:   strings.Join(articleIDs, ","),
 		TokenUsage:   0,
-		ResponseTime: 0,
+		ResponseTime: int(elapsed),
 	}
 	database.GetDB().Create(consult)
-
-	resp.Answer = answer
-	resp.RelatedArticles = relatedArticles
 
 	return resp, nil
 }
 
-func (s *AIServiceImpl) GetLawArticles(ctx context.Context, req *ai.GetLawArticlesRequest) (resp *ai.GetLawArticlesResponse, err error) {
-	resp = &ai.GetLawArticlesResponse{Code: 0, Message: "success"}
+func (s *AIServiceImpl) GetLawArticles(ctx context.Context, req *ai_kitex.GetLawArticlesRequest) (resp *ai_kitex.GetLawArticlesResponse, err error) {
+	resp = &ai_kitex.GetLawArticlesResponse{Code: 0, Message: "success"}
 
 	var articles []model.LawArticle
 	var total int64
@@ -77,27 +107,16 @@ func (s *AIServiceImpl) GetLawArticles(ctx context.Context, req *ai.GetLawArticl
 	db.Offset(offset).Limit(int(req.PageSize)).Order("id DESC").Find(&articles)
 
 	resp.Total = total
-	resp.Articles = make([]*ai.LawArticle, len(articles))
+	resp.Articles = make([]*ai_kitex.LawArticle, len(articles))
 	for i, a := range articles {
-		resp.Articles[i] = &ai.LawArticle{
-			Id:         a.ID,
-			Title:      a.Title,
-			Content:    a.Content,
-			Category:   a.Category,
-			LawName:    a.LawName,
-			ArticleNo:  a.ArticleNo,
-			Keywords:   a.Keywords,
-			VectorId:   a.VectorID,
-			Status:     int32(a.Status),
-			CreatedAt:  a.CreatedAt.Format("2006-01-02 15:04:05"),
-		}
+		resp.Articles[i] = convertModelLawArticleToKitex(&a)
 	}
 
 	return resp, nil
 }
 
-func (s *AIServiceImpl) CreateLawArticle(ctx context.Context, req *ai.CreateLawArticleRequest) (resp *ai.CreateLawArticleResponse, err error) {
-	resp = &ai.CreateLawArticleResponse{Code: 0, Message: "success"}
+func (s *AIServiceImpl) CreateLawArticle(ctx context.Context, req *ai_kitex.CreateLawArticleRequest) (resp *ai_kitex.CreateLawArticleResponse, err error) {
+	resp = &ai_kitex.CreateLawArticleResponse{Code: 0, Message: "success"}
 
 	article := &model.LawArticle{
 		Title:     req.Article.Title,
@@ -121,8 +140,8 @@ func (s *AIServiceImpl) CreateLawArticle(ctx context.Context, req *ai.CreateLawA
 	return resp, nil
 }
 
-func (s *AIServiceImpl) UpdateLawArticle(ctx context.Context, req *ai.UpdateLawArticleRequest) (resp *ai.UpdateLawArticleResponse, err error) {
-	resp = &ai.UpdateLawArticleResponse{Code: 0, Message: "success"}
+func (s *AIServiceImpl) UpdateLawArticle(ctx context.Context, req *ai_kitex.UpdateLawArticleRequest) (resp *ai_kitex.UpdateLawArticleResponse, err error) {
+	resp = &ai_kitex.UpdateLawArticleResponse{Code: 0, Message: "success"}
 
 	updates := map[string]interface{}{
 		"title":      req.Article.Title,
@@ -144,8 +163,8 @@ func (s *AIServiceImpl) UpdateLawArticle(ctx context.Context, req *ai.UpdateLawA
 	return resp, nil
 }
 
-func (s *AIServiceImpl) DeleteLawArticle(ctx context.Context, req *ai.DeleteLawArticleRequest) (resp *ai.DeleteLawArticleResponse, err error) {
-	resp = &ai.DeleteLawArticleResponse{Code: 0, Message: "success"}
+func (s *AIServiceImpl) DeleteLawArticle(ctx context.Context, req *ai_kitex.DeleteLawArticleRequest) (resp *ai_kitex.DeleteLawArticleResponse, err error) {
+	resp = &ai_kitex.DeleteLawArticleResponse{Code: 0, Message: "success"}
 
 	result := database.GetDB().Model(&model.LawArticle{}).Where("id = ?", req.Id).Update("deleted_at", time.Now())
 	if result.Error != nil {
@@ -154,38 +173,116 @@ func (s *AIServiceImpl) DeleteLawArticle(ctx context.Context, req *ai.DeleteLawA
 		return resp, nil
 	}
 
+	go func() {
+		if err := vector.DeleteByLawID(req.Id); err != nil {
+			logger.Warn("Delete vector for law article failed",
+				zap.Int64("lawId", req.Id),
+				logger.Error(err),
+			)
+		}
+	}()
+
 	return resp, nil
 }
 
-func (s *AIServiceImpl) VectorizeLawArticles(ctx context.Context, req *ai.VectorizeLawArticlesRequest) (resp *ai.VectorizeLawArticlesResponse, err error) {
-	resp = &ai.VectorizeLawArticlesResponse{Code: 0, Message: "success"}
+func (s *AIServiceImpl) VectorizeLawArticles(ctx context.Context, req *ai_kitex.VectorizeLawArticlesRequest) (resp *ai_kitex.VectorizeLawArticlesResponse, err error) {
+	resp = &ai_kitex.VectorizeLawArticlesResponse{Code: 0, Message: "success"}
 
 	var articles []model.LawArticle
 	db := database.GetDB().Where("deleted_at IS NULL")
 	if len(req.Ids) > 0 {
 		db = db.Where("id IN ?", req.Ids)
+	} else {
+		db = db.Where("vector_id IS NULL OR vector_id = ''")
 	}
 	db.Find(&articles)
 
+	if len(articles) == 0 {
+		resp.ProcessedCount = 0
+		return resp, nil
+	}
+
 	processedCount := 0
-	for _, article := range articles {
-		vectorID := "vec_" + utils.GenerateIDStr()
+	batchSize := 10
 
-		database.GetDB().Model(&article).Updates(map[string]interface{}{
-			"vector_id": vectorID,
-			"vectorized_at": time.Now(),
-		})
+	for i := 0; i < len(articles); i += batchSize {
+		end := i + batchSize
+		if end > len(articles) {
+			end = len(articles)
+		}
+		batch := articles[i:end]
 
-		processedCount++
-		logger.Info("Law article vectorized", logger.Int64("id", article.ID), logger.String("vectorId", vectorID))
+		texts := make([]string, len(batch))
+		for j, a := range batch {
+			texts[j] = fmt.Sprintf("%s %s %s %s", a.LawName, a.ArticleNo, a.Title, a.Content)
+		}
+
+		embeddings, embedErr := vector.GetBatchEmbeddings(texts)
+		if embedErr != nil {
+			logger.Error("Batch embeddings failed",
+				zap.Int("batchStart", i),
+				logger.Error(embedErr),
+			)
+			continue
+		}
+
+		ids := make([]int64, len(batch))
+		vectors := make([][]float32, len(batch))
+		metadata := make([]map[string]interface{}, len(batch))
+
+		for j, a := range batch {
+			if j >= len(embeddings) || len(embeddings[j]) == 0 {
+				continue
+			}
+
+			vectorID := "vec_" + utils.GenerateIDStr()
+			ids[j] = a.ID
+			vectors[j] = embeddings[j]
+			metadata[j] = map[string]interface{}{
+				"law_id":   a.ID,
+				"content":  truncateContent(a.Content, 2000),
+				"keywords": a.Keywords,
+			}
+
+			database.GetDB().Model(&a).Updates(map[string]interface{}{
+				"vector_id":     vectorID,
+				"vectorized_at": time.Now(),
+			})
+
+			processedCount++
+			logger.Info("Law article vectorized",
+				zap.Int64("id", a.ID),
+				zap.String("vectorId", vectorID),
+			)
+		}
+
+		validIds := make([]int64, 0)
+		validVectors := make([][]float32, 0)
+		validMetadata := make([]map[string]interface{}, 0)
+		for j := range ids {
+			if len(vectors[j]) > 0 {
+				validIds = append(validIds, ids[j])
+				validVectors = append(validVectors, vectors[j])
+				validMetadata = append(validMetadata, metadata[j])
+			}
+		}
+
+		if len(validIds) > 0 {
+			if insertErr := vector.InsertVectors(validIds, validVectors, validMetadata); insertErr != nil {
+				logger.Error("Insert vectors to milvus failed",
+					zap.Int("count", len(validIds)),
+					logger.Error(insertErr),
+				)
+			}
+		}
 	}
 
 	resp.ProcessedCount = int32(processedCount)
 	return resp, nil
 }
 
-func (s *AIServiceImpl) GenerateMediationSummary(ctx context.Context, req *ai.GenerateSummaryRequest) (resp *ai.GenerateSummaryResponse, err error) {
-	resp = &ai.GenerateSummaryResponse{Code: 0, Message: "success"}
+func (s *AIServiceImpl) GenerateMediationSummary(ctx context.Context, req *ai_kitex.GenerateSummaryRequest) (resp *ai_kitex.GenerateSummaryResponse, err error) {
+	resp = &ai_kitex.GenerateSummaryResponse{Code: 0, Message: "success"}
 
 	if strings.TrimSpace(req.MediationContent) == "" {
 		resp.Code = 400
@@ -193,7 +290,33 @@ func (s *AIServiceImpl) GenerateMediationSummary(ctx context.Context, req *ai.Ge
 		return resp, nil
 	}
 
-	summary := s.generateSummary(req.CaseId, req.MediationContent)
+	var caseData model.DisputeCase
+	database.GetDB().Where("id = ?", req.CaseId).First(&caseData)
+
+	caseInfo := map[string]interface{}{
+		"caseId":         req.CaseId,
+		"caseNo":         caseData.CaseNo,
+		"title":          caseData.Title,
+		"typeName":       caseData.TypeName,
+		"applicantName":  caseData.ApplicantName,
+		"applicantPhone": caseData.ApplicantPhone,
+		"respondentName": caseData.RespondentName,
+		"respondentPhone": caseData.RespondentPhone,
+		"description":    caseData.Description,
+		"mediatorName":   caseData.MediatorName,
+		"level":          caseData.Level,
+	}
+
+	summary, summaryErr := ai.GenerateMediationSummary(caseInfo, req.MediationContent)
+	if summaryErr != nil {
+		logger.Error("Generate mediation summary failed",
+			zap.Int64("caseId", req.CaseId),
+			logger.Error(summaryErr),
+		)
+		resp.Code = 500
+		resp.Message = "生成调解摘要失败"
+		return resp, nil
+	}
 
 	record := &model.AIAssistRecord{
 		CaseID:     req.CaseId,
@@ -208,8 +331,8 @@ func (s *AIServiceImpl) GenerateMediationSummary(ctx context.Context, req *ai.Ge
 	return resp, nil
 }
 
-func (s *AIServiceImpl) SearchSimilarLawArticles(ctx context.Context, req *ai.SearchSimilarRequest) (resp *ai.SearchSimilarResponse, err error) {
-	resp = &ai.SearchSimilarResponse{Code: 0, Message: "success"}
+func (s *AIServiceImpl) SearchSimilarLawArticles(ctx context.Context, req *ai_kitex.SearchSimilarRequest) (resp *ai_kitex.SearchSimilarResponse, err error) {
+	resp = &ai_kitex.SearchSimilarResponse{Code: 0, Message: "success"}
 
 	if strings.TrimSpace(req.Question) == "" {
 		resp.Code = 400
@@ -217,7 +340,82 @@ func (s *AIServiceImpl) SearchSimilarLawArticles(ctx context.Context, req *ai.Se
 		return resp, nil
 	}
 
-	keywords := s.extractKeywords(req.Question)
+	topK := int(req.TopK)
+	if topK <= 0 {
+		topK = 10
+	}
+
+	queryVector, embedErr := vector.GetEmbedding(req.Question)
+	if embedErr != nil {
+		logger.Warn("Get query embedding failed, fallback to keyword search",
+			logger.Error(embedErr),
+		)
+		return s.keywordSearch(req.Question, topK)
+	}
+
+	searchResults, searchErr := vector.SearchVectors(queryVector, topK, "")
+	if searchErr != nil {
+		logger.Warn("Milvus search failed, fallback to keyword search",
+			logger.Error(searchErr),
+		)
+		return s.keywordSearch(req.Question, topK)
+	}
+
+	resp.Articles = make([]*ai_kitex.LawArticle, 0)
+	resp.Scores = make([]float64, 0)
+
+	lawIDs := make([]int64, 0)
+	scoreMap := make(map[int64]float64)
+	contentMap := make(map[int64]string)
+
+	for _, r := range searchResults {
+		if r.LawID > 0 {
+			lawIDs = append(lawIDs, r.LawID)
+			scoreMap[r.LawID] = float64(r.Score)
+			contentMap[r.LawID] = r.Content
+		}
+	}
+
+	if len(lawIDs) > 0 {
+		var lawArticles []model.LawArticle
+		database.GetDB().Where("id IN ?", lawIDs).Find(&lawArticles)
+
+		lawArticleMap := make(map[int64]*model.LawArticle)
+		for i := range lawArticles {
+			lawArticleMap[lawArticles[i].ID] = &lawArticles[i]
+		}
+
+		for _, lawID := range lawIDs {
+			if article, ok := lawArticleMap[lawID]; ok {
+				kitexArticle := convertModelLawArticleToKitex(article)
+				if content, hasContent := contentMap[lawID]; hasContent && kitexArticle.Content == "" {
+					kitexArticle.Content = content
+				}
+				resp.Articles = append(resp.Articles, kitexArticle)
+				if score, hasScore := scoreMap[lawID]; hasScore {
+					resp.Scores = append(resp.Scores, score)
+				}
+			}
+		}
+	}
+
+	if len(resp.Articles) == 0 {
+		logger.Info("Vector search returned no results, fallback to keyword search")
+		return s.keywordSearch(req.Question, topK)
+	}
+
+	logger.Info("Similar law articles search completed",
+		zap.Int("count", len(resp.Articles)),
+		zap.String("method", "vector"),
+	)
+
+	return resp, nil
+}
+
+func (s *AIServiceImpl) keywordSearch(question string, limit int) (*ai_kitex.SearchSimilarResponse, error) {
+	resp := &ai_kitex.SearchSimilarResponse{Code: 0, Message: "success"}
+
+	keywords := extractKeywords(question)
 
 	var articles []model.LawArticle
 	db := database.GetDB().Model(&model.LawArticle{}).Where("status = 1 AND deleted_at IS NULL")
@@ -228,104 +426,71 @@ func (s *AIServiceImpl) SearchSimilarLawArticles(ctx context.Context, req *ai.Se
 		orConditions = append(orConditions, "keywords LIKE ?")
 		params = append(params, "%"+kw+"%")
 	}
+	orConditions = append(orConditions, "title LIKE ?")
+	params = append(params, "%"+question+"%")
+	orConditions = append(orConditions, "content LIKE ?")
+	params = append(params, "%"+question+"%")
 
-	if len(orConditions) > 0 {
-		db = db.Where(strings.Join(orConditions, " OR "), params...)
-	}
-
-	limit := 10
-	if req.TopK > 0 {
-		limit = int(req.TopK)
-	}
+	db = db.Where(strings.Join(orConditions, " OR "), params...)
 	db.Limit(limit).Find(&articles)
 
-	resp.Articles = make([]*ai.LawArticle, len(articles))
+	resp.Articles = make([]*ai_kitex.LawArticle, len(articles))
 	resp.Scores = make([]float64, len(articles))
 	for i, a := range articles {
-		resp.Articles[i] = &ai.LawArticle{
-			Id:         a.ID,
-			Title:      a.Title,
-			Content:    a.Content,
-			Category:   a.Category,
-			LawName:    a.LawName,
-			ArticleNo:  a.ArticleNo,
-			Keywords:   a.Keywords,
-			VectorId:   a.VectorID,
-			Status:     int32(a.Status),
-			CreatedAt:  a.CreatedAt.Format("2006-01-02 15:04:05"),
-		}
-		resp.Scores[i] = s.calculateSimilarity(req.Question, a.Content)
+		resp.Articles[i] = convertModelLawArticleToKitex(&a)
+		resp.Scores[i] = calculateKeywordScore(question, keywords, &a)
 	}
+
+	logger.Info("Similar law articles search completed",
+		zap.Int("count", len(resp.Articles)),
+		zap.String("method", "keyword"),
+	)
 
 	return resp, nil
 }
 
-func (s *AIServiceImpl) generateAIAnswer(question string, relatedArticles []*ai.LawArticle) string {
-	var articleRefs string
-	if len(relatedArticles) > 0 {
-		articleRefs = "\n\n相关法律依据："
-		for i, art := range relatedArticles {
-			articleRefs += fmt.Sprintf("\n%d. 《%s》%s：%s", i+1, art.LawName, art.ArticleNo, art.Title)
-		}
+func convertLawReferenceToKitex(ref ai.LawReference) *ai_kitex.LawArticle {
+	var lawID int64
+	parsedID, err := strconv.ParseInt(strings.TrimSpace(ref.ArticleNo), 10, 64)
+	if err == nil {
+		lawID = parsedID
 	}
 
-	prefix := "根据您的问题，以下是相关法律建议：\n\n"
-
-	if strings.Contains(question, "离婚") || strings.Contains(question, "婚姻") {
-		return prefix + "关于婚姻家庭纠纷，建议您先尝试协商解决。如果无法协商，可以向人民调解委员会申请调解，或者直接向人民法院提起诉讼。" +
-			"根据《民法典》相关规定，夫妻双方自愿离婚的，应当签订书面离婚协议，并亲自到婚姻登记机关申请离婚登记。" +
-			"涉及财产分割和子女抚养问题的，应当按照照顾子女、女方和无过错方权益的原则处理。" + articleRefs
+	return &ai_kitex.LawArticle{
+		Id:        lawID,
+		Title:     fmt.Sprintf("%s %s", ref.LawName, ref.ArticleNo),
+		Content:   ref.Content,
+		LawName:   ref.LawName,
+		ArticleNo: ref.ArticleNo,
+		Keywords:  "",
+		Status:    1,
+		CreatedAt: "",
 	}
-
-	if strings.Contains(question, "借贷") || strings.Contains(question, "借款") || strings.Contains(question, "欠钱") {
-		return prefix + "关于民间借贷纠纷，建议您收集相关证据（借条、转账记录、聊天记录等），先与对方协商还款。" +
-			"如果协商不成，可以向人民法院提起诉讼。根据《民法典》第六百六十七条规定，借款合同是借款人向贷款人借款，到期返还借款并支付利息的合同。" +
-			"注意诉讼时效为三年，从约定的还款期限届满之日起计算。" + articleRefs
-	}
-
-	if strings.Contains(question, "物业") || strings.Contains(question, "小区") {
-		return prefix + "关于物业纠纷，建议您先与物业公司沟通协商，也可以向业主委员会反映情况。" +
-			"如果无法解决，可以向街道办事处或住建部门投诉，或者通过诉讼途径解决。" +
-			"根据《物业管理条例》，业主应当按照约定支付物业费，物业公司应当按照物业服务合同的约定提供相应服务。" + articleRefs
-	}
-
-	if strings.Contains(question, "劳动") || strings.Contains(question, "工资") || strings.Contains(question, "辞退") {
-		return prefix + "关于劳动争议，建议您先与用人单位协商解决。协商不成的，可以向劳动争议仲裁委员会申请仲裁。" +
-			"对仲裁裁决不服的，可以向人民法院提起诉讼。根据《劳动合同法》，用人单位应当按照劳动合同约定和国家规定，向劳动者及时足额支付劳动报酬。" +
-			"用人单位违法解除劳动合同的，应当支付经济赔偿金。" + articleRefs
-	}
-
-	return prefix + "您好！感谢您的咨询。根据您描述的情况，建议您：\n\n" +
-		"1. 首先收集和保存好相关证据材料（合同、单据、聊天记录等）\n" +
-		"2. 尝试与对方友好协商，争取达成和解\n" +
-		"3. 协商不成的，可以向所在地人民调解委员会申请调解\n" +
-		"4. 也可以向相关行政主管部门投诉举报\n" +
-		"5. 必要时通过诉讼或仲裁途径维护合法权益\n\n" +
-		"如需更详细的法律建议，建议您携带相关材料到当地司法所或律师事务所现场咨询。" + articleRefs
 }
 
-func (s *AIServiceImpl) generateSummary(caseID int64, content string) string {
-	var caseData model.DisputeCase
-	database.GetDB().Select("case_no, title, applicant_name, respondent_name").Where("id = ?", caseID).First(&caseData)
-
-	summary := fmt.Sprintf("调解摘要\n\n案件编号：%s\n案件名称：%s\n", caseData.CaseNo, caseData.Title)
-	if caseData.ApplicantName != "" {
-		summary += fmt.Sprintf("申请人：%s\n", caseData.ApplicantName)
+func convertModelLawArticleToKitex(a *model.LawArticle) *ai_kitex.LawArticle {
+	createdAt := ""
+	if !a.CreatedAt.IsZero() {
+		createdAt = a.CreatedAt.Format("2006-01-02 15:04:05")
 	}
-	if caseData.RespondentName != "" {
-		summary += fmt.Sprintf("被申请人：%s\n", caseData.RespondentName)
+	return &ai_kitex.LawArticle{
+		Id:        a.ID,
+		Title:     a.Title,
+		Content:   a.Content,
+		Category:  a.Category,
+		LawName:   a.LawName,
+		ArticleNo: a.ArticleNo,
+		Keywords:  a.Keywords,
+		VectorId:  a.VectorID,
+		Status:    int32(a.Status),
+		CreatedAt: createdAt,
 	}
-	summary += fmt.Sprintf("\n调解时间：%s\n", time.Now().Format("2006年01月02日 15:04"))
-	summary += "\n调解内容：\n" + s.extractKeyPoints(content) + "\n\n"
-	summary += "调解结果：双方自愿达成协议，争议事项已妥善解决。"
-
-	return summary
 }
 
-func (s *AIServiceImpl) extractKeywords(question string) []string {
-	keywords := []string{"合同", "侵权", "违约", "赔偿", "离婚", "借贷", "劳动", "物业", "交通", "医疗", "房产", "继承"}
+func extractKeywords(question string) []string {
+	keywordList := []string{"合同", "侵权", "违约", "赔偿", "离婚", "借贷", "劳动", "物业", "交通", "医疗", "房产", "继承", "消费", "租赁", "担保", "保险", "知识产权", "土地", "建设工程", "合伙", "公司", "担保", "票据", "海商", "纠纷"}
 	result := make([]string, 0)
-	for _, kw := range keywords {
+	for _, kw := range keywordList {
 		if strings.Contains(question, kw) {
 			result = append(result, kw)
 		}
@@ -336,51 +501,38 @@ func (s *AIServiceImpl) extractKeywords(question string) []string {
 	return result
 }
 
-func (s *AIServiceImpl) extractKeyPoints(content string) string {
-	lines := strings.Split(content, "\n")
-	points := make([]string, 0)
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if line != "" && len(line) > 5 {
-			if len(points) < 5 {
-				points = append(points, "• "+line)
-			}
+func calculateKeywordScore(question string, keywords []string, article *model.LawArticle) float64 {
+	score := 0.0
+	total := len(keywords) + 2
+
+	for _, kw := range keywords {
+		if strings.Contains(article.Keywords, kw) {
+			score += 1.0
+		}
+		if strings.Contains(article.Title, kw) {
+			score += 0.5
+		}
+		if strings.Contains(article.Content, kw) {
+			score += 0.3
 		}
 	}
-	if len(points) == 0 {
-		if len(content) > 200 {
-			return content[:200] + "..."
+
+	for _, kw := range keywords {
+		if strings.Contains(question, kw) {
+			score += 0.2
 		}
+	}
+
+	if score > 0 {
+		return score / float64(total)
+	}
+	return 0.1
+}
+
+func truncateContent(content string, maxLen int) string {
+	runes := []rune(content)
+	if len(runes) <= maxLen {
 		return content
 	}
-	return strings.Join(points, "\n")
-}
-
-func (s *AIServiceImpl) calculateSimilarity(text1, text2 string) float64 {
-	k1 := s.extractKeywords(text1)
-	k2 := s.extractKeywords(text2)
-
-	intersection := 0
-	for _, a := range k1 {
-		for _, b := range k2 {
-			if a == b {
-				intersection++
-				break
-			}
-		}
-	}
-
-	union := len(k1) + len(k2) - intersection
-	if union == 0 {
-		return 0.5
-	}
-	return float64(intersection) / float64(union)
-}
-
-func (s *AIServiceImpl) extractArticleIDs(articles []*ai.LawArticle) string {
-	ids := make([]string, len(articles))
-	for i, a := range articles {
-		ids[i] = fmt.Sprintf("%d", a.Id)
-	}
-	return strings.Join(ids, ",")
+	return string(runes[:maxLen])
 }

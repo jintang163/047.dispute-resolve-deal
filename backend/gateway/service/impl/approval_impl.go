@@ -3,6 +3,8 @@ package impl
 import (
 	"context"
 	"errors"
+	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/dispute-resolve/common/constants"
@@ -10,13 +12,16 @@ import (
 	"github.com/dispute-resolve/common/logger"
 	"github.com/dispute-resolve/common/model"
 	"github.com/dispute-resolve/common/mq"
-	"github.com/dispute-resolve/common/utils"
+	"github.com/dispute-resolve/common/workflow"
 	"github.com/dispute-resolve/gateway/service"
+	"go.uber.org/zap"
+	"gorm.io/gorm"
 )
 
 type ApprovalServiceImpl struct{}
 
 func NewApprovalService() service.ApprovalService {
+	workflow.InitFlowable()
 	return &ApprovalServiceImpl{}
 }
 
@@ -28,59 +33,124 @@ func (s *ApprovalServiceImpl) SubmitApproval(ctx context.Context, caseID int64, 
 		return nil, errors.New("只有调解中的案件才能提交审批")
 	}
 
-	var workflow model.WorkflowDefinition
+	var wfDef model.WorkflowDefinition
 	if workflowID == 0 {
-		database.GetDB().Where("dispute_type_id = ? AND status = 1", caseData.TypeID).Order("version DESC").First(&workflow)
+		database.GetDB().Where("dispute_type_id = ? AND status = 1", caseData.TypeID).Order("version DESC").First(&wfDef)
 	} else {
-		database.GetDB().Where("id = ?", workflowID).First(&workflow)
+		database.GetDB().Where("id = ?", workflowID).First(&wfDef)
 	}
-	if workflow.ID == 0 {
-		database.GetDB().Where("status = 1").Order("version DESC").First(&workflow)
+	if wfDef.ID == 0 {
+		database.GetDB().Where("status = 1").Order("version DESC").First(&wfDef)
 	}
 
 	tx := database.GetDB().Begin()
 
-	roleMap := map[string]int32{
-		"mediator": constants.RoleMediator,
-		"leader":   constants.RoleLeader,
-		"director": constants.RoleDirector,
+	processInstanceID, err := workflow.StartDisputeApproval(caseID, &caseData)
+	useFlowable := err == nil
+
+	if !useFlowable {
+		logger.Warn("Flowable start process failed, use local mode",
+			zap.Int64("caseId", caseID),
+			logger.Error(err),
+		)
 	}
 
-	approvers := []struct {
-		Role  string `json:"role"`
-		Level int32  `json:"level"`
-	}{
-		{"mediator", 1},
-		{"leader", 2},
-		{"director", 3},
+	caseData.Status = constants.CaseStatusApproving
+	caseData.WorkflowID = wfDef.ID
+	caseData.ApprovalWorkflowID = wfDef.ID
+	tx.Model(&caseData).Updates(map[string]interface{}{
+		"status":               caseData.Status,
+		"workflow_id":          wfDef.ID,
+		"approval_workflow_id": wfDef.ID,
+	})
+
+	var processInstIDStr string
+	if useFlowable {
+		processInstIDStr = processInstanceID
+	} else {
+		processInstIDStr = "local_" + strconv.FormatInt(caseID, 10)
 	}
 
-	for i, approver := range approvers {
-		var user model.User
-		if i == 0 {
-			user.ID = caseData.MediatorID
-		} else {
-			database.GetDB().Where("role = ? AND organization_id = ?", roleMap[approver.Role], caseData.OrganizationID).
-				Order("id ASC").First(&user)
+	history := &model.DisputeHistory{
+		CaseID:     caseID,
+		ActionType: constants.HistoryActionApproval,
+		ActionName: "提交审批",
+		Remark:     fmt.Sprintf("提交审批，启动流程实例: %s", processInstIDStr),
+		OperatorID: userID,
+	}
+	tx.Create(history)
+
+	var firstTaskID string
+	var firstApproverID int64
+	var firstApproverName string
+
+	if useFlowable {
+		tasks, taskErr := workflow.GetFlowableClient().GetProcessInstanceTasks(processInstanceID)
+		if taskErr == nil && len(tasks) > 0 {
+			firstTask := tasks[0]
+			firstTaskID = firstTask.ID
+			if firstTask.Assignee != "" {
+				if id, parseErr := strconv.ParseInt(firstTask.Assignee, 10, 64); parseErr == nil {
+					firstApproverID = id
+					var approver model.User
+					database.GetDB().Where("id = ?", id).First(&approver)
+					firstApproverName = approver.RealName
+				}
+			}
 		}
+	}
+
+	if firstApproverID == 0 {
+		firstApproverID = caseData.MediatorID
+		firstApproverName = caseData.MediatorName
+	}
+
+	deadline := time.Now().Add(24 * time.Hour)
+	firstApproval := &model.ApprovalRecord{
+		CaseID:        caseID,
+		WorkflowID:    wfDef.ID,
+		WorkflowName:  wfDef.Name,
+		NodeType:      1,
+		NodeName:      "调解员审批",
+		ApproverID:    firstApproverID,
+		ApproverName:  firstApproverName,
+		Status:        constants.ApprovalStatusProcessing,
+		SortOrder:     1,
+		Level:         1,
+		TimeoutLevel:  0,
+		Deadline:      &deadline,
+	}
+
+	if err := tx.Create(firstApproval).Error; err != nil {
+		tx.Rollback()
+		return nil, err
+	}
+
+	roleMap := map[int]int32{
+		1: constants.RoleLeader,
+		2: constants.RoleDirector,
+	}
+	nodeNames := []string{"调解员", "调解组长", "综治主任"}
+
+	for i := 1; i < 3; i++ {
+		var user model.User
+		database.GetDB().Where("role = ? AND organization_id = ?",
+			roleMap[i],
+			caseData.OrganizationID,
+		).Order("id ASC").First(&user)
 
 		record := &model.ApprovalRecord{
 			CaseID:        caseID,
-			WorkflowID:    workflow.ID,
-			WorkflowName:  workflow.Name,
+			WorkflowID:    wfDef.ID,
+			WorkflowName:  wfDef.Name,
 			NodeType:      1,
-			NodeName:      []string{"调解员", "调解组长", "综治主任"}[i],
+			NodeName:      nodeNames[i],
 			ApproverID:    user.ID,
 			ApproverName:  user.RealName,
 			Status:        constants.ApprovalStatusPending,
 			SortOrder:     int32(i + 1),
-			Level:         approver.Level,
+			Level:         int32(i + 1),
 			TimeoutLevel:  0,
-		}
-
-		if i == 0 {
-			record.Status = constants.ApprovalStatusProcessing
-			record.Deadline = time.Now().Add(24 * time.Hour).Format("2006-01-02 15:04:05")
 		}
 
 		if err := tx.Create(record).Error; err != nil {
@@ -89,32 +159,29 @@ func (s *ApprovalServiceImpl) SubmitApproval(ctx context.Context, caseID int64, 
 		}
 	}
 
-	caseData.Status = constants.CaseStatusApproving
-	caseData.ApprovalWorkflowID = workflow.ID
-	tx.Model(&caseData).Updates(caseData)
-
-	history := &model.DisputeHistory{
-		CaseID:     caseID,
-		ActionType: constants.HistoryActionApproval,
-		ActionName: "提交审批",
-		Remark:     "提交审批，进入审批流程",
-		OperatorID: userID,
-	}
-	tx.Create(history)
-
 	tx.Commit()
 
-	var firstApproval model.ApprovalRecord
-	database.GetDB().Where("case_id = ? AND sort_order = 1", caseID).First(&firstApproval)
+	if useFlowable && firstTaskID != "" && firstApproverID > 0 {
+		workflow.GetFlowableClient().ClaimTask(firstTaskID, strconv.FormatInt(firstApproverID, 10))
+	}
 
-	mq.SendAsync(constants.MQTopicApprovalCreated, map[string]interface{}{
-		"caseId":     caseID,
-		"approvalId": firstApproval.ID,
-		"approverId": firstApproval.ApproverID,
-		"workflowId": workflow.ID,
+	mq.SendAsync(constants.MQTopicApprovalNotify, map[string]interface{}{
+		"caseId":            caseID,
+		"approvalId":        firstApproval.ID,
+		"approverId":        firstApproverID,
+		"workflowId":        wfDef.ID,
+		"processInstanceId": processInstIDStr,
+		"taskId":            firstTaskID,
 	})
 
-	return &firstApproval, nil
+	logger.Info("Approval submitted",
+		zap.Int64("caseId", caseID),
+		zap.String("processInstanceId", processInstIDStr),
+		zap.Int64("firstApproverId", firstApproverID),
+		zap.Bool("useFlowable", useFlowable),
+	)
+
+	return firstApproval, nil
 }
 
 func (s *ApprovalServiceImpl) ApproveApproval(ctx context.Context, approvalID int64, userID int64, remark string) error {
@@ -130,42 +197,17 @@ func (s *ApprovalServiceImpl) ApproveApproval(ctx context.Context, approvalID in
 
 	tx := database.GetDB().Begin()
 
+	approvedAt := time.Now()
 	record.Status = constants.ApprovalStatusApproved
-	record.ApproveAction = constants.ApprovalActionApprove
+	record.ApproveAction = constants.ApprovalActionPass
 	record.ActionName = "通过"
 	record.Remark = remark
-	record.ApprovedAt = time.Now()
+	record.ApprovedAt = &approvedAt
 	tx.Save(&record)
 
-	var nextRecord model.ApprovalRecord
-	database.GetDB().Where("case_id = ? AND sort_order = ?", record.CaseID, record.SortOrder+1).First(&nextRecord)
+	s.callFlowableIfAvailable(record.CaseID, userID, constants.ApprovalActionPass, remark)
 
-	if nextRecord.ID > 0 {
-		nextRecord.Status = constants.ApprovalStatusProcessing
-		nextRecord.Deadline = time.Now().Add(24 * time.Hour).Format("2006-01-02 15:04:05")
-		tx.Save(&nextRecord)
-
-		mq.SendAsync(constants.MQTopicApprovalCreated, map[string]interface{}{
-			"caseId":     record.CaseID,
-			"approvalId": nextRecord.ID,
-			"approverId": nextRecord.ApproverID,
-		})
-	} else {
-		var caseData model.DisputeCase
-		database.GetDB().Where("id = ?", record.CaseID).First(&caseData)
-		caseData.Status = constants.CaseStatusClosed
-		caseData.ClosedAt = time.Now()
-		tx.Save(&caseData)
-
-		history := &model.DisputeHistory{
-			CaseID:     record.CaseID,
-			ActionType: constants.HistoryActionApproval,
-			ActionName: "审批完成",
-			Remark:     "案件审批通过，已结案",
-			OperatorID: userID,
-		}
-		tx.Create(history)
-	}
+	s.localApproveNext(tx, &record)
 
 	history := &model.DisputeHistory{
 		CaseID:     record.CaseID,
@@ -177,7 +219,44 @@ func (s *ApprovalServiceImpl) ApproveApproval(ctx context.Context, approvalID in
 	tx.Create(history)
 
 	tx.Commit()
+
+	go workflow.SyncApprovalRecordsFromFlowable(record.CaseID)
+
 	return nil
+}
+
+func (s *ApprovalServiceImpl) localApproveNext(tx *gorm.DB, record *model.ApprovalRecord) {
+	var nextRecord model.ApprovalRecord
+	database.GetDB().Where("case_id = ? AND sort_order = ?", record.CaseID, record.SortOrder+1).First(&nextRecord)
+
+	if nextRecord.ID > 0 {
+		deadline := time.Now().Add(24 * time.Hour)
+		tx.Model(&nextRecord).Updates(map[string]interface{}{
+			"status":   constants.ApprovalStatusProcessing,
+			"deadline": &deadline,
+		})
+
+		mq.SendAsync(constants.MQTopicApprovalNotify, map[string]interface{}{
+			"caseId":     record.CaseID,
+			"approvalId": nextRecord.ID,
+			"approverId": nextRecord.ApproverID,
+		})
+	} else {
+		closedAt := time.Now()
+		tx.Model(&model.DisputeCase{}).Where("id = ?", record.CaseID).Updates(map[string]interface{}{
+			"status":    constants.CaseStatusClosed,
+			"closed_at": &closedAt,
+		})
+
+		history := &model.DisputeHistory{
+			CaseID:     record.CaseID,
+			ActionType: constants.HistoryActionApproval,
+			ActionName: "审批完成",
+			Remark:     "案件审批通过，已结案",
+			OperatorID: record.ApproverID,
+		}
+		tx.Create(history)
+	}
 }
 
 func (s *ApprovalServiceImpl) RejectApproval(ctx context.Context, approvalID int64, userID int64, remark string) error {
@@ -193,19 +272,19 @@ func (s *ApprovalServiceImpl) RejectApproval(ctx context.Context, approvalID int
 
 	tx := database.GetDB().Begin()
 
+	approvedAt := time.Now()
 	record.Status = constants.ApprovalStatusRejected
 	record.ApproveAction = constants.ApprovalActionReject
 	record.ActionName = "驳回"
 	record.Remark = remark
-	record.ApprovedAt = time.Now()
+	record.ApprovedAt = &approvedAt
 	tx.Save(&record)
 
-	var caseData model.DisputeCase
-	database.GetDB().Where("id = ?", record.CaseID).First(&caseData)
-	caseData.Status = constants.CaseStatusMediating
-	tx.Save(&caseData)
+	s.callFlowableIfAvailable(record.CaseID, userID, constants.ApprovalActionReject, remark)
 
-	database.GetDB().Model(&model.ApprovalRecord{}).
+	tx.Model(&model.DisputeCase{}).Where("id = ?", record.CaseID).Update("status", constants.CaseStatusMediating)
+
+	tx.Model(&model.ApprovalRecord{}).
 		Where("case_id = ? AND sort_order > ?", record.CaseID, record.SortOrder).
 		Update("status", constants.ApprovalStatusCanceled)
 
@@ -235,19 +314,19 @@ func (s *ApprovalServiceImpl) ReturnApproval(ctx context.Context, approvalID int
 
 	tx := database.GetDB().Begin()
 
+	approvedAt := time.Now()
 	record.Status = constants.ApprovalStatusReturned
 	record.ApproveAction = constants.ApprovalActionReturn
 	record.ActionName = "退回修改"
 	record.Remark = remark
-	record.ApprovedAt = time.Now()
+	record.ApprovedAt = &approvedAt
 	tx.Save(&record)
 
-	var caseData model.DisputeCase
-	database.GetDB().Where("id = ?", record.CaseID).First(&caseData)
-	caseData.Status = constants.CaseStatusMediating
-	tx.Save(&caseData)
+	s.callFlowableIfAvailable(record.CaseID, userID, constants.ApprovalActionReturn, remark)
 
-	database.GetDB().Model(&model.ApprovalRecord{}).
+	tx.Model(&model.DisputeCase{}).Where("id = ?", record.CaseID).Update("status", constants.CaseStatusMediating)
+
+	tx.Model(&model.ApprovalRecord{}).
 		Where("case_id = ? AND sort_order > ?", record.CaseID, record.SortOrder).
 		Update("status", constants.ApprovalStatusCanceled)
 
@@ -280,6 +359,15 @@ func (s *ApprovalServiceImpl) AddSignApproval(ctx context.Context, approvalID in
 
 	tx := database.GetDB().Begin()
 
+	processInstanceID, procErr := workflow.GetProcessInstanceByBusinessKey(record.CaseID)
+	if procErr == nil && processInstanceID != "" {
+		taskID, taskErr := workflow.GetCurrentTaskIDByProcessInstance(processInstanceID)
+		if taskErr == nil && taskID != "" {
+			workflow.AddSignTask(taskID, userID, signUserID, remark)
+		}
+	}
+
+	deadline := time.Now().Add(24 * time.Hour)
 	newRecord := &model.ApprovalRecord{
 		CaseID:        record.CaseID,
 		WorkflowID:    record.WorkflowID,
@@ -294,7 +382,7 @@ func (s *ApprovalServiceImpl) AddSignApproval(ctx context.Context, approvalID in
 		Level:         record.Level,
 		SignUserID:    signUserID,
 		SignUserName:  signUser.RealName,
-		Deadline:      time.Now().Add(24 * time.Hour).Format("2006-01-02 15:04:05"),
+		Deadline:      &deadline,
 	}
 	tx.Create(newRecord)
 
@@ -317,7 +405,7 @@ func (s *ApprovalServiceImpl) AddSignApproval(ctx context.Context, approvalID in
 
 	tx.Commit()
 
-	mq.SendAsync(constants.MQTopicApprovalCreated, map[string]interface{}{
+	mq.SendAsync(constants.MQTopicApprovalNotify, map[string]interface{}{
 		"caseId":     record.CaseID,
 		"approvalId": newRecord.ID,
 		"approverId": signUserID,
@@ -342,6 +430,14 @@ func (s *ApprovalServiceImpl) TransferApproval(ctx context.Context, approvalID i
 
 	tx := database.GetDB().Begin()
 
+	processInstanceID, procErr := workflow.GetProcessInstanceByBusinessKey(record.CaseID)
+	if procErr == nil && processInstanceID != "" {
+		taskID, taskErr := workflow.GetCurrentTaskIDByProcessInstance(processInstanceID)
+		if taskErr == nil && taskID != "" {
+			workflow.DelegateApprovalTask(taskID, userID, transferUserID, remark)
+		}
+	}
+
 	record.Status = constants.ApprovalStatusTransferred
 	record.ApproveAction = constants.ApprovalActionTransfer
 	record.ActionName = "转审"
@@ -350,20 +446,21 @@ func (s *ApprovalServiceImpl) TransferApproval(ctx context.Context, approvalID i
 	record.Remark = remark
 	tx.Save(&record)
 
+	deadline := time.Now().Add(24 * time.Hour)
 	newRecord := &model.ApprovalRecord{
-		CaseID:          record.CaseID,
-		WorkflowID:      record.WorkflowID,
-		WorkflowName:    record.WorkflowName,
-		NodeType:        3,
-		NodeName:        "转审审批",
-		ApproverID:      transferUserID,
-		ApproverName:    transferUser.RealName,
-		Status:          constants.ApprovalStatusProcessing,
-		SortOrder:       record.SortOrder,
-		Level:           record.Level,
-		TransferUserID:  transferUserID,
+		CaseID:           record.CaseID,
+		WorkflowID:       record.WorkflowID,
+		WorkflowName:     record.WorkflowName,
+		NodeType:         3,
+		NodeName:         "转审审批",
+		ApproverID:       transferUserID,
+		ApproverName:     transferUser.RealName,
+		Status:           constants.ApprovalStatusProcessing,
+		SortOrder:        record.SortOrder,
+		Level:            record.Level,
+		TransferUserID:   transferUserID,
 		TransferUserName: transferUser.RealName,
-		Deadline:        time.Now().Add(24 * time.Hour).Format("2006-01-02 15:04:05"),
+		Deadline:         &deadline,
 	}
 	tx.Create(newRecord)
 
@@ -378,7 +475,7 @@ func (s *ApprovalServiceImpl) TransferApproval(ctx context.Context, approvalID i
 
 	tx.Commit()
 
-	mq.SendAsync(constants.MQTopicApprovalCreated, map[string]interface{}{
+	mq.SendAsync(constants.MQTopicApprovalNotify, map[string]interface{}{
 		"caseId":     record.CaseID,
 		"approvalId": newRecord.ID,
 		"approverId": transferUserID,
@@ -388,6 +485,35 @@ func (s *ApprovalServiceImpl) TransferApproval(ctx context.Context, approvalID i
 }
 
 func (s *ApprovalServiceImpl) GetApprovalProgress(ctx context.Context, caseID int64) ([]*model.ApprovalRecord, error) {
+	processInstanceID, err := workflow.GetProcessInstanceByBusinessKey(caseID)
+	if err == nil && processInstanceID != "" {
+		timeline, timelineErr := workflow.GetApprovalTimeline(processInstanceID)
+		if timelineErr == nil && len(timeline) > 0 {
+			records := make([]*model.ApprovalRecord, 0, len(timeline))
+			for _, node := range timeline {
+				record := &model.ApprovalRecord{
+					CaseID:        caseID,
+					NodeName:      node.NodeName,
+					ApproverID:    node.ApproverID,
+					ApproverName:  node.Approver,
+					Status:        node.Status,
+					Remark:        node.Remark,
+					SortOrder:     node.SortOrder,
+					ApproveAction: node.Action,
+					ActionName:    node.ActionText,
+				}
+				if !node.CreateTime.IsZero() {
+					record.CreatedAt = node.CreateTime
+				}
+				if !node.HandleTime.IsZero() {
+					record.ApprovedAt = &node.HandleTime
+				}
+				records = append(records, record)
+			}
+			return records, nil
+		}
+	}
+
 	var records []*model.ApprovalRecord
 	result := database.GetDB().Where("case_id = ?", caseID).Order("sort_order, created_at ASC").Find(&records)
 	if result.Error != nil {
@@ -429,7 +555,7 @@ func (s *ApprovalServiceImpl) ProcessTimeoutUpgrade(ctx context.Context) error {
 	var records []model.ApprovalRecord
 
 	database.GetDB().Where("status = ? AND deadline IS NOT NULL", constants.ApprovalStatusProcessing).
-		Where("deadline < ?", now.Format("2006-01-02 15:04:05")).
+		Where("deadline < ?", now).
 		Find(&records)
 
 	processed := 0
@@ -451,13 +577,15 @@ func (s *ApprovalServiceImpl) ProcessTimeoutUpgrade(ctx context.Context) error {
 				upgrades[record.TimeoutLevel-1].Role, record.CaseID).Order("id ASC").First(&upgradeUser)
 
 			if upgradeUser.ID > 0 {
-				mq.SendAsync(constants.MQTopicApprovalTimeout, map[string]interface{}{
-					"caseId":      record.CaseID,
-					"approvalId":  record.ID,
-					"timeoutLevel": record.TimeoutLevel,
+				mq.SendAsync(constants.MQTopicApprovalNotify, map[string]interface{}{
+					"caseId":        record.CaseID,
+					"approvalId":    record.ID,
+					"timeoutLevel":  record.TimeoutLevel,
 					"upgradeUserId": upgradeUser.ID,
+					"type":          "timeout",
 				})
 
+				deadline := time.Now().Add(24 * time.Hour)
 				newRecord := &model.ApprovalRecord{
 					CaseID:        record.CaseID,
 					WorkflowID:    record.WorkflowID,
@@ -470,7 +598,7 @@ func (s *ApprovalServiceImpl) ProcessTimeoutUpgrade(ctx context.Context) error {
 					SortOrder:     record.SortOrder,
 					Level:         record.Level,
 					TimeoutLevel:  record.TimeoutLevel,
-					Deadline:      time.Now().Add(24 * time.Hour).Format("2006-01-02 15:04:05"),
+					Deadline:      &deadline,
 				}
 				database.GetDB().Create(newRecord)
 
@@ -483,4 +611,34 @@ func (s *ApprovalServiceImpl) ProcessTimeoutUpgrade(ctx context.Context) error {
 
 	logger.Info("Process timeout upgrade", logger.Int("processed", processed))
 	return nil
+}
+
+func (s *ApprovalServiceImpl) callFlowableIfAvailable(caseID int64, userID int64, action int, remark string) {
+	processInstanceID, err := workflow.GetProcessInstanceByBusinessKey(caseID)
+	if err != nil {
+		logger.Debug("No flowable process found for case",
+			zap.Int64("caseId", caseID),
+			logger.Error(err),
+		)
+		return
+	}
+
+	taskID, taskErr := workflow.GetCurrentTaskIDByProcessInstance(processInstanceID)
+	if taskErr != nil || taskID == "" {
+		logger.Debug("No active task found",
+			zap.Int64("caseId", caseID),
+			zap.String("processInstanceId", processInstanceID),
+			logger.Error(taskErr),
+		)
+		return
+	}
+
+	flowErr := workflow.CompleteApprovalTask(taskID, userID, action, remark)
+	if flowErr != nil {
+		logger.Warn("Flowable task action failed",
+			zap.String("taskId", taskID),
+			zap.Int("action", action),
+			logger.Error(flowErr),
+		)
+	}
 }

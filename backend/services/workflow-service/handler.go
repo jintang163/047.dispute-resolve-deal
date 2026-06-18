@@ -50,11 +50,11 @@ func (s *WorkflowServiceImpl) SubmitApproval(ctx context.Context, req *workflow.
 			CaseID:       req.CaseId,
 			WorkflowID:   workflowDef.ID,
 			WorkflowName: workflowDef.Name,
-			NodeType:     node.NodeType,
+			NodeType:     int(node.NodeType),
 			NodeName:     node.NodeName,
 			ApproverID:   node.ApproverID,
 			ApproverName: node.ApproverName,
-			Status:       constants.ApprovalStatusPending,
+			Status:       int32(constants.ApprovalStatusPending),
 			Remark:       "",
 			SortOrder:    i + 1,
 			Level:        node.Level,
@@ -97,7 +97,7 @@ func (s *WorkflowServiceImpl) SubmitApproval(ctx context.Context, req *workflow.
 			CaseId:       firstApproval.CaseID,
 			WorkflowId:   firstApproval.WorkflowID,
 			WorkflowName: firstApproval.WorkflowName,
-			NodeType:     firstApproval.NodeType,
+			NodeType:     int32(firstApproval.NodeType),
 			NodeName:     firstApproval.NodeName,
 			ApproverId:   firstApproval.ApproverID,
 			ApproverName: firstApproval.ApproverName,
@@ -236,7 +236,7 @@ func (s *WorkflowServiceImpl) GetApprovalProgress(ctx context.Context, req *work
 			CaseId:           r.CaseID,
 			WorkflowId:       r.WorkflowID,
 			WorkflowName:     r.WorkflowName,
-			NodeType:         r.NodeType,
+			NodeType:         int32(r.NodeType),
 			NodeName:         r.NodeName,
 			ApproverId:       r.ApproverID,
 			ApproverName:     r.ApproverName,
@@ -292,6 +292,7 @@ func (s *WorkflowServiceImpl) GetApprovalTodoList(ctx context.Context, req *work
 			Id:           r.ID,
 			CaseId:       r.CaseID,
 			WorkflowName: r.WorkflowName,
+			NodeType:     int32(r.NodeType),
 			NodeName:     r.NodeName,
 			ApproverName: r.ApproverName,
 			Status:       r.Status,
@@ -330,6 +331,7 @@ func (s *WorkflowServiceImpl) GetApprovalDoneList(ctx context.Context, req *work
 			Id:            r.ID,
 			CaseId:        r.CaseID,
 			WorkflowName:  r.WorkflowName,
+			NodeType:      int32(r.NodeType),
 			NodeName:      r.NodeName,
 			ApproverName:  r.ApproverName,
 			Status:        r.Status,
@@ -366,7 +368,7 @@ func (s *WorkflowServiceImpl) ProcessTimeoutUpgrade(ctx context.Context) (resp *
 		})
 
 		var caseData model.DisputeCase
-		database.GetDB().Select("case_no, title, mediator_id, organization_id").
+		database.GetDB().Select("case_no, title, mediator_id, org_id").
 			Where("id = ?", approval.CaseID).First(&caseData)
 
 		urgeType := constants.UrgeTypeSystem
@@ -405,13 +407,13 @@ type approvalNode struct {
 
 func (s *WorkflowServiceImpl) buildApprovalChain(workflowDef model.WorkflowDefinition, caseData model.DisputeCase) []approvalNode {
 	var org model.Organization
-	database.GetDB().Where("id = ?", caseData.OrganizationID).First(&org)
+	database.GetDB().Where("id = ?", caseData.OrgID).First(&org)
 
 	nodes := make([]approvalNode, 0)
 
 	var mediators []model.User
 	database.GetDB().Where("org_id = ? AND role = ? AND status = 1",
-		caseData.OrganizationID, constants.RoleMediator).
+		caseData.OrgID, constants.RoleMediator).
 		Order("id ASC").Find(&mediators)
 
 	if caseData.MediatorID > 0 {
@@ -443,7 +445,7 @@ func (s *WorkflowServiceImpl) buildApprovalChain(workflowDef model.WorkflowDefin
 
 	var leaders []model.User
 	database.GetDB().Where("org_id = ? AND role = ? AND status = 1",
-		caseData.OrganizationID, constants.RoleLeader).
+		caseData.OrgID, constants.RoleLeader).
 		Order("id ASC").Find(&leaders)
 
 	if len(leaders) > 0 {
@@ -459,7 +461,7 @@ func (s *WorkflowServiceImpl) buildApprovalChain(workflowDef model.WorkflowDefin
 
 	var directors []model.User
 	database.GetDB().Where("org_id = ? AND role = ? AND status = 1",
-		caseData.OrganizationID, constants.RoleDirector).
+		caseData.OrgID, constants.RoleDirector).
 		Order("id ASC").Find(&directors)
 
 	if len(directors) > 0 {

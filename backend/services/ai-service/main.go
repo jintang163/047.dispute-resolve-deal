@@ -1,11 +1,9 @@
 package main
 
 import (
-	"log"
 	"net"
 
-	"github.com/dispute-resolve/common/config"
-	"github.com/dispute-resolve/common/database"
+	"github.com/dispute-resolve/common/bootstrap"
 	"github.com/dispute-resolve/common/logger"
 	ai "github.com/dispute-resolve/ai-service/kitex_gen/ai/aiservice"
 
@@ -14,14 +12,17 @@ import (
 )
 
 func main() {
-	if err := config.LoadConfig("../../config/config.yaml"); err != nil {
-		log.Fatalf("Load config failed: %v", err)
-	}
+	initResult := bootstrap.InitServiceWithOptions(bootstrap.InitOptions{
+		ConfigPath:   "../../config/config.yaml",
+		ServiceName:  "ai-service",
+		EnableAI:     true,
+		EnableMilvus: true,
+		EnableRedis:  true,
+		LogLevel:     "info",
+	})
+	defer initResult.Stop()
 
-	logger.InitLogger("ai-service")
-	database.InitDB()
-
-	port := config.GlobalConfig.ServicePorts.AI
+	port := bootstrap.GetServicePort("ai-service")
 	svr := ai.NewServer(new(AIServiceImpl),
 		server.WithServerBasicInfo(&rpcinfo.EndpointBasicInfo{ServiceName: "ai-service"}),
 		server.WithServiceAddr(&net.TCPAddr{Port: port}),

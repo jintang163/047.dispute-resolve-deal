@@ -38,7 +38,7 @@ func (s *UserServiceImpl) Login(ctx context.Context, req *user.LoginRequest) (re
 		return resp, nil
 	}
 
-	token, err := utils.GenerateToken(userModel.ID, userModel.Username, userModel.Role, userModel.OrganizationID)
+	token, err := utils.GenerateToken(userModel.ID, userModel.Username, userModel.Role, userModel.OrgID)
 	if err != nil {
 		resp.Code = 500
 		resp.Message = "生成Token失败"
@@ -49,11 +49,11 @@ func (s *UserServiceImpl) Login(ctx context.Context, req *user.LoginRequest) (re
 		Id:             userModel.ID,
 		Username:       userModel.Username,
 		RealName:       userModel.RealName,
-		Role:           userModel.Role,
+		Role:           int32(userModel.Role),
 		Avatar:         userModel.Avatar,
-		Mobile:         userModel.Mobile,
+		Mobile:         userModel.Phone,
 		Email:          userModel.Email,
-		OrganizationId: userModel.OrganizationID,
+		OrganizationId: userModel.OrgID,
 		Status:         userModel.Status,
 		CreatedAt:      userModel.CreatedAt.Format("2006-01-02 15:04:05"),
 	}
@@ -87,14 +87,14 @@ func (s *UserServiceImpl) KioskLogin(ctx context.Context, deviceNo string) (resp
 		return resp, nil
 	}
 
-	token, _ := utils.GenerateToken(userModel.ID, userModel.Username, userModel.Role, userModel.OrganizationID)
+	token, _ := utils.GenerateToken(userModel.ID, userModel.Username, userModel.Role, userModel.OrgID)
 
 	resp.User = &user.User{
 		Id:             userModel.ID,
 		Username:       userModel.Username,
 		RealName:       userModel.RealName,
-		Role:           userModel.Role,
-		OrganizationId: userModel.OrganizationID,
+		Role:           int32(userModel.Role),
+		OrganizationId: userModel.OrgID,
 	}
 	resp.Token = token
 
@@ -105,29 +105,29 @@ func (s *UserServiceImpl) MiniAppLogin(ctx context.Context, openid string) (resp
 	resp = &user.LoginResponse{Code: 0, Message: "success"}
 
 	var userModel model.User
-	result := database.GetDB().Where("openid = ? AND deleted_at IS NULL", openid).First(&userModel)
+	result := database.GetDB().Where("open_id = ? AND deleted_at IS NULL", openid).First(&userModel)
 	if result.Error != nil {
 		userModel = model.User{
-			Username:       "wx_" + openid[:8],
-			RealName:       "微信用户",
-			Role:           99,
-			OpenID:         openid,
-			Status:         1,
-			OrganizationID: 1,
+			Username: "wx_" + openid[:8],
+			RealName: "微信用户",
+			Role:     99,
+			OpenID:   openid,
+			Status:   1,
+			OrgID:    1,
 		}
 		userModel.Password, _ = utils.HashPassword(utils.GenerateRandomString(16))
 		database.GetDB().Create(&userModel)
 	}
 
-	token, _ := utils.GenerateToken(userModel.ID, userModel.Username, userModel.Role, userModel.OrganizationID)
+	token, _ := utils.GenerateToken(userModel.ID, userModel.Username, userModel.Role, userModel.OrgID)
 
 	resp.User = &user.User{
 		Id:             userModel.ID,
 		Username:       userModel.Username,
 		RealName:       userModel.RealName,
-		Role:           userModel.Role,
+		Role:           int32(userModel.Role),
 		Openid:         userModel.OpenID,
-		OrganizationId: userModel.OrganizationID,
+		OrganizationId: userModel.OrgID,
 	}
 	resp.Token = token
 
@@ -138,7 +138,7 @@ func (s *UserServiceImpl) GetUserInfo(ctx context.Context, req *user.GetUserRequ
 	resp = &user.GetUserResponse{Code: 0, Message: "success"}
 
 	var userModel model.User
-	result := database.GetDB().Select("id, username, real_name, role, avatar, mobile, email, organization_id, created_at").
+	result := database.GetDB().Select("id, username, real_name, role, avatar, phone, email, org_id, created_at").
 		Where("id = ? AND deleted_at IS NULL", req.UserId).First(&userModel)
 	if result.Error != nil {
 		resp.Code = 404
@@ -150,11 +150,11 @@ func (s *UserServiceImpl) GetUserInfo(ctx context.Context, req *user.GetUserRequ
 		Id:             userModel.ID,
 		Username:       userModel.Username,
 		RealName:       userModel.RealName,
-		Role:           userModel.Role,
+		Role:           int32(userModel.Role),
 		Avatar:         userModel.Avatar,
-		Mobile:         userModel.Mobile,
+		Mobile:         userModel.Phone,
 		Email:          userModel.Email,
-		OrganizationId: userModel.OrganizationID,
+		OrganizationId: userModel.OrgID,
 		CreatedAt:      userModel.CreatedAt.Format("2006-01-02 15:04:05"),
 	}
 
@@ -170,14 +170,14 @@ func (s *UserServiceImpl) GetUserList(ctx context.Context, req *user.GetUserList
 	db := database.GetDB().Model(&model.User{}).Where("deleted_at IS NULL")
 
 	if req.Keyword != "" {
-		db = db.Where("username LIKE ? OR real_name LIKE ? OR mobile LIKE ?",
+		db = db.Where("username LIKE ? OR real_name LIKE ? OR phone LIKE ?",
 			"%"+req.Keyword+"%", "%"+req.Keyword+"%", "%"+req.Keyword+"%")
 	}
 	if req.Role > 0 {
 		db = db.Where("role = ?", req.Role)
 	}
 	if req.OrganizationId > 0 {
-		db = db.Where("organization_id = ?", req.OrganizationId)
+		db = db.Where("org_id = ?", req.OrganizationId)
 	}
 
 	db.Count(&total)
@@ -191,11 +191,11 @@ func (s *UserServiceImpl) GetUserList(ctx context.Context, req *user.GetUserList
 			Id:             u.ID,
 			Username:       u.Username,
 			RealName:       u.RealName,
-			Role:           u.Role,
+			Role:           int32(u.Role),
 			Avatar:         u.Avatar,
-			Mobile:         u.Mobile,
+			Mobile:         u.Phone,
 			Email:          u.Email,
-			OrganizationId: u.OrganizationID,
+			OrganizationId: u.OrgID,
 			Status:         u.Status,
 			CreatedAt:      u.CreatedAt.Format("2006-01-02 15:04:05"),
 		}
@@ -210,7 +210,7 @@ func (s *UserServiceImpl) GetMediatorList(ctx context.Context, req *user.GetMedi
 	var users []model.User
 	db := database.GetDB().Where("role = ? AND status = 1 AND deleted_at IS NULL", 4)
 	if req.OrganizationId > 0 {
-		db = db.Where("organization_id = ?", req.OrganizationId)
+		db = db.Where("org_id = ?", req.OrganizationId)
 	}
 	db.Order("real_name").Find(&users)
 
@@ -219,7 +219,7 @@ func (s *UserServiceImpl) GetMediatorList(ctx context.Context, req *user.GetMedi
 		resp.Mediators[i] = &user.User{
 			Id:       u.ID,
 			RealName: u.RealName,
-			Mobile:   u.Mobile,
+			Mobile:   u.Phone,
 		}
 	}
 
@@ -243,8 +243,8 @@ func (s *UserServiceImpl) GetOrganizationTree(ctx context.Context, req *user.Get
 			Name:      o.Name,
 			Code:      o.Code,
 			ParentId:  o.ParentID,
-			Level:     o.Level,
-			SortOrder: o.SortOrder,
+			Level:     0,
+			SortOrder: int32(o.SortOrder),
 			Leader:    o.Leader,
 			Contact:   o.Contact,
 			Address:   o.Address,
@@ -271,14 +271,14 @@ func (s *UserServiceImpl) CreateUser(ctx context.Context, req *user.CreateUserRe
 	hashedPassword, _ := bcrypt.GenerateFromPassword([]byte(req.User.Username+"123456"), bcrypt.DefaultCost)
 
 	userModel := model.User{
-		Username:       req.User.Username,
-		RealName:       req.User.RealName,
-		Password:       string(hashedPassword),
-		Role:           req.User.Role,
-		Mobile:         req.User.Mobile,
-		Email:          req.User.Email,
-		OrganizationID: req.User.OrganizationId,
-		Status:         1,
+		Username: req.User.Username,
+		RealName: req.User.RealName,
+		Password: string(hashedPassword),
+		Role:     int(req.User.Role),
+		Phone:    req.User.Mobile,
+		Email:    req.User.Email,
+		OrgID:    req.User.OrganizationId,
+		Status:   1,
 	}
 
 	result := database.GetDB().Create(&userModel)
@@ -297,12 +297,12 @@ func (s *UserServiceImpl) UpdateUser(ctx context.Context, req *user.UpdateUserRe
 	resp = &user.UpdateUserResponse{Code: 0, Message: "success"}
 
 	updates := map[string]interface{}{
-		"real_name":       req.User.RealName,
-		"role":            req.User.Role,
-		"mobile":          req.User.Mobile,
-		"email":           req.User.Email,
-		"organization_id": req.User.OrganizationId,
-		"status":          req.User.Status,
+		"real_name": req.User.RealName,
+		"role":      int(req.User.Role),
+		"phone":     req.User.Mobile,
+		"email":     req.User.Email,
+		"org_id":    req.User.OrganizationId,
+		"status":    req.User.Status,
 	}
 
 	result := database.GetDB().Model(&model.User{}).Where("id = ?", req.User.Id).Updates(updates)

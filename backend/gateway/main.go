@@ -8,35 +8,37 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/dispute-resolve/common/bootstrap"
 	"github.com/dispute-resolve/common/config"
-	"github.com/dispute-resolve/common/database"
 	"github.com/dispute-resolve/common/logger"
-	"github.com/dispute-resolve/common/utils"
+	"github.com/dispute-resolve/common/mq"
+	"github.com/dispute-resolve/gateway/cron"
 	"github.com/dispute-resolve/gateway/router"
 	"github.com/dispute-resolve/gateway/rpc"
 	"github.com/dispute-resolve/gateway/service"
 	"github.com/dispute-resolve/gateway/service/impl"
 
-	"github.com/cloudwego/hertz/pkg/app"
 	"github.com/cloudwego/hertz/pkg/app/server"
 	"github.com/cloudwego/hertz/pkg/common/hlog"
 	"github.com/cloudwego/hertz/pkg/network/netpoll"
-	hertzlog "github.com/cloudwego/hertz/pkg/common/hlog"
 	hertzzap "github.com/hertz-contrib/logger/zap"
 )
 
 var timeout = 30 * time.Second
 
 func main() {
-	if err := config.LoadConfig("./conf/config.yaml"); err != nil {
-		panic(fmt.Sprintf("Load config failed: %v", err))
-	}
+	initResult := bootstrap.InitServiceWithOptions(bootstrap.InitOptions{
+		ConfigPath:     "./conf/config.yaml",
+		ServiceName:    "gateway",
+		EnableRedis:    true,
+		EnableFlowable: true,
+		EnableAI:       true,
+		EnableMilvus:   true,
+		LogLevel:       "info",
+	})
+	defer initResult.Stop()
+
 	cfg := config.GlobalConfig
-
-	logger.InitLogger(cfg.Server.Mode, cfg.Server.Name)
-	utils.InitIDGenerator(1)
-
-	database.InitDB(&cfg.Database)
 
 	log := logger.GetLogger()
 	hlog.SetLogger(hertzzap.NewLogger(hertzzap.WithLogger(log)))
@@ -80,6 +82,10 @@ func main() {
 
 	rpc.InitRPCClients()
 
+	mq.StartConsumers()
+
+	cron.StartCronTasks()
+
 	router.RegisterRoutes(h)
 
 	go func() {
@@ -94,6 +100,11 @@ func main() {
 	<-quit
 
 	log.Info("Gateway server shutting down")
+
+	cron.StopCronTasks()
+
+	mq.ShutdownAllConsumers()
+
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 

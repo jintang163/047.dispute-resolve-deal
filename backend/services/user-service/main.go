@@ -1,11 +1,9 @@
 package main
 
 import (
-	"log"
 	"net"
 
-	"github.com/dispute-resolve/common/config"
-	"github.com/dispute-resolve/common/database"
+	"github.com/dispute-resolve/common/bootstrap"
 	"github.com/dispute-resolve/common/logger"
 	user "github.com/dispute-resolve/user-service/kitex_gen/user/userservice"
 
@@ -14,14 +12,15 @@ import (
 )
 
 func main() {
-	if err := config.LoadConfig("../../config/config.yaml"); err != nil {
-		log.Fatalf("Load config failed: %v", err)
-	}
+	initResult := bootstrap.InitServiceWithOptions(bootstrap.InitOptions{
+		ConfigPath:  "../../config/config.yaml",
+		ServiceName: "user-service",
+		EnableRedis: true,
+		LogLevel:    "info",
+	})
+	defer initResult.Stop()
 
-	logger.InitLogger("user-service")
-	database.InitDB()
-
-	port := config.GlobalConfig.ServicePorts.User
+	port := bootstrap.GetServicePort("user-service")
 	svr := user.NewServer(new(UserServiceImpl),
 		server.WithServerBasicInfo(&rpcinfo.EndpointBasicInfo{ServiceName: "user-service"}),
 		server.WithServiceAddr(&net.TCPAddr{Port: port}),

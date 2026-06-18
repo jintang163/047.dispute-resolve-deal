@@ -1,11 +1,9 @@
 package main
 
 import (
-	"log"
 	"net"
 
-	"github.com/dispute-resolve/common/config"
-	"github.com/dispute-resolve/common/database"
+	"github.com/dispute-resolve/common/bootstrap"
 	"github.com/dispute-resolve/common/logger"
 	workflow "github.com/dispute-resolve/workflow-service/kitex_gen/workflow/workflowservice"
 
@@ -14,14 +12,16 @@ import (
 )
 
 func main() {
-	if err := config.LoadConfig("../../config/config.yaml"); err != nil {
-		log.Fatalf("Load config failed: %v", err)
-	}
+	initResult := bootstrap.InitServiceWithOptions(bootstrap.InitOptions{
+		ConfigPath:     "../../config/config.yaml",
+		ServiceName:    "workflow-service",
+		EnableFlowable: true,
+		EnableRedis:    true,
+		LogLevel:       "info",
+	})
+	defer initResult.Stop()
 
-	logger.InitLogger("workflow-service")
-	database.InitDB()
-
-	port := config.GlobalConfig.ServicePorts.Workflow
+	port := bootstrap.GetServicePort("workflow-service")
 	svr := workflow.NewServer(new(WorkflowServiceImpl),
 		server.WithServerBasicInfo(&rpcinfo.EndpointBasicInfo{ServiceName: "workflow-service"}),
 		server.WithServiceAddr(&net.TCPAddr{Port: port}),

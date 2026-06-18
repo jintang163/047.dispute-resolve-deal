@@ -25,7 +25,7 @@ func (s *DisputeServiceImpl) GetDisputeList(ctx context.Context, req *dispute.Ge
 	if req.Role == constants.RoleMediator {
 		db = db.Where("mediator_id = ?", req.UserId)
 	} else if req.Role >= constants.RoleLeader && req.Role <= constants.RoleDirector {
-		db = db.Where("organization_id = ?", req.OrganizationId)
+		db = db.Where("org_id = ?", req.OrganizationId)
 	}
 
 	if req.Status > 0 {
@@ -113,22 +113,22 @@ func (s *DisputeServiceImpl) CreateDispute(ctx context.Context, req *dispute.Cre
 		CaseNo:          utils.GenerateCaseNo(req.Dispute.OrganizationId),
 		Title:           req.Dispute.Title,
 		TypeID:          req.Dispute.TypeId,
-		CaseLevel:       req.Dispute.CaseLevel,
+		Level:           int(req.Dispute.CaseLevel),
 		Description:     req.Dispute.Description,
 		ExpectedSolution: req.Dispute.ExpectedSolution,
 		Source:          req.Dispute.Source,
 		ApplicantName:   req.Dispute.ApplicantName,
 		ApplicantIDCard: req.Dispute.ApplicantIdcard,
-		ApplicantMobile: req.Dispute.ApplicantMobile,
+		ApplicantPhone:  req.Dispute.ApplicantMobile,
 		RespondentName:  req.Dispute.RespondentName,
 		RespondentIDCard: req.Dispute.RespondentIdcard,
-		RespondentMobile: req.Dispute.RespondentMobile,
+		RespondentPhone: req.Dispute.RespondentMobile,
 		Longitude:       req.Dispute.Longitude,
 		Latitude:        req.Dispute.Latitude,
 		Address:         req.Dispute.Address,
-		OrganizationID:  req.Dispute.OrganizationId,
+		OrgID:           req.Dispute.OrganizationId,
 		Status:          constants.CaseStatusPending,
-		UrgencyLevel:    req.Dispute.UrgencyLevel,
+		UrgencyLevel:    int(req.Dispute.UrgencyLevel),
 		CreatedBy:       req.Dispute.CreatedBy,
 	}
 
@@ -143,15 +143,15 @@ func (s *DisputeServiceImpl) CreateDispute(ctx context.Context, req *dispute.Cre
 
 	if len(req.Evidence) > 0 {
 		for _, e := range req.Evidence {
-			evidence := &model.Evidence{
+			evidence := &model.DisputeEvidence{
 				CaseID:     caseData.ID,
 				FileType:   e.FileType,
 				FileName:   e.FileName,
 				FileURL:    e.FileUrl,
 				FileSize:   e.FileSize,
 				Remark:     e.Remark,
-				SortOrder:  e.SortOrder,
-				UploadFrom: e.UploadFrom,
+				SortOrder:  int(e.SortOrder),
+				UploadFrom: int(e.UploadFrom),
 				UploadedBy: e.UploadedBy,
 			}
 			if err := tx.Create(evidence).Error; err != nil {
@@ -354,7 +354,7 @@ func (s *DisputeServiceImpl) MiniAppCreateDispute(ctx context.Context, req *disp
 func (s *DisputeServiceImpl) UploadEvidence(ctx context.Context, req *dispute.UploadEvidenceRequest) (resp *dispute.UploadEvidenceResponse, err error) {
 	resp = &dispute.UploadEvidenceResponse{Code: 0, Message: "success"}
 
-	evidence := &model.Evidence{
+	evidence := &model.DisputeEvidence{
 		CaseID:     req.CaseId,
 		FileType:   req.FileType,
 		FileName:   req.FileName,
@@ -362,7 +362,7 @@ func (s *DisputeServiceImpl) UploadEvidence(ctx context.Context, req *dispute.Up
 		FileSize:   req.FileSize,
 		Remark:     req.Remark,
 		SortOrder:  0,
-		UploadFrom: req.UploadFrom,
+		UploadFrom: int(req.UploadFrom),
 		UploadedBy: req.UserId,
 	}
 
@@ -410,8 +410,8 @@ func (s *DisputeServiceImpl) GetEvidenceList(ctx context.Context, req *dispute.G
 			FileUrl:    e.FileURL,
 			FileSize:   e.FileSize,
 			Remark:     e.Remark,
-			SortOrder:  e.SortOrder,
-			UploadFrom: e.UploadFrom,
+			SortOrder:  int32(e.SortOrder),
+			UploadFrom: int32(e.UploadFrom),
 			CreatedAt:  e.CreatedAt.Format("2006-01-02 15:04:05"),
 		}
 	}
@@ -422,7 +422,7 @@ func (s *DisputeServiceImpl) GetEvidenceList(ctx context.Context, req *dispute.G
 func (s *DisputeServiceImpl) DeleteEvidence(ctx context.Context, req *dispute.DeleteEvidenceRequest) (resp *dispute.DeleteEvidenceResponse, err error) {
 	resp = &dispute.DeleteEvidenceResponse{Code: 0, Message: "success"}
 
-	result := database.GetDB().Model(&model.Evidence{}).Where("id = ?", req.EvidenceId).Update("deleted_at", time.Now())
+	result := database.GetDB().Model(&model.DisputeEvidence{}).Where("id = ?", req.EvidenceId).Update("deleted_at", time.Now())
 	if result.Error != nil {
 		resp.Code = 500
 		resp.Message = "删除证据失败"
@@ -449,7 +449,7 @@ func (s *DisputeServiceImpl) BatchDeleteEvidence(ctx context.Context, req *dispu
 func (s *DisputeServiceImpl) UpdateEvidenceRemark(ctx context.Context, req *dispute.UpdateEvidenceRemarkRequest) (resp *dispute.UpdateEvidenceRemarkResponse, err error) {
 	resp = &dispute.UpdateEvidenceRemarkResponse{Code: 0, Message: "success"}
 
-	result := database.GetDB().Model(&model.Evidence{}).Where("id = ?", req.EvidenceId).Update("remark", req.Remark)
+	result := database.GetDB().Model(&model.DisputeEvidence{}).Where("id = ?", req.EvidenceId).Update("remark", req.Remark)
 	if result.Error != nil {
 		resp.Code = 500
 		resp.Message = "更新备注失败"

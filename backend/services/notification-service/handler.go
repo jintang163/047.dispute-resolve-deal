@@ -194,7 +194,7 @@ func (s *NotificationServiceImpl) SendNotification(ctx context.Context, req *not
 			"notificationId": record.ID,
 			"receiverId":     receiverID,
 			"receiverName":   receiver.RealName,
-			"mobile":         receiver.Mobile,
+			"mobile":         receiver.Phone,
 			"title":          title,
 			"content":        content,
 			"channel":        template.Channel,

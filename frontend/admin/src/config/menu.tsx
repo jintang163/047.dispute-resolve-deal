@@ -1,0 +1,123 @@
+import React from 'react';
+import {
+  DashboardOutlined,
+  FileTextOutlined,
+  AuditOutlined,
+  CheckCircleOutlined,
+  ClockCircleOutlined,
+  UserOutlined,
+  TeamOutlined,
+  TrophyOutlined,
+  SettingOutlined,
+} from '@ant-design/icons';
+
+export interface MenuItem {
+  key: string;
+  label: string;
+  icon?: React.ReactNode;
+  path?: string;
+  children?: MenuItem[];
+}
+
+export const menuConfig: MenuItem[] = [
+  {
+    key: 'dashboard',
+    label: '数据概览',
+    icon: React.createElement(DashboardOutlined),
+    path: '/dashboard',
+  },
+  {
+    key: 'dispute',
+    label: '纠纷案件管理',
+    icon: React.createElement(FileTextOutlined),
+    children: [
+      {
+        key: 'dispute-list',
+        label: '案件列表',
+        path: '/dispute',
+      },
+      {
+        key: 'dispute-create',
+        label: '新增案件',
+        path: '/dispute/create',
+      },
+    ],
+  },
+  {
+    key: 'mediation',
+    label: '调解记录',
+    icon: React.createElement(AuditOutlined),
+    path: '/mediation',
+  },
+  {
+    key: 'approval',
+    label: '审批中心',
+    icon: React.createElement(CheckCircleOutlined),
+    children: [
+      {
+        key: 'approval-todo',
+        label: '待审批',
+        icon: React.createElement(ClockCircleOutlined),
+        path: '/approval/todo',
+      },
+      {
+        key: 'approval-done',
+        label: '已审批',
+        icon: React.createElement(CheckCircleOutlined),
+        path: '/approval/done',
+      },
+    ],
+  },
+  {
+    key: 'system',
+    label: '系统管理',
+    icon: React.createElement(SettingOutlined),
+    children: [
+      {
+        key: 'system-users',
+        label: '用户管理',
+        icon: React.createElement(UserOutlined),
+        path: '/system/users',
+      },
+      {
+        key: 'system-orgs',
+        label: '组织管理',
+        icon: React.createElement(TeamOutlined),
+        path: '/system/orgs',
+      },
+    ],
+  },
+  {
+    key: 'performance',
+    label: '绩效考核',
+    icon: React.createElement(TrophyOutlined),
+    path: '/performance',
+  },
+];
+
+export const getFlatMenuKeys = (items: MenuItem[] = menuConfig): string[] => {
+  const keys: string[] = [];
+  items.forEach((item) => {
+    keys.push(item.key);
+    if (item.children) {
+      keys.push(...getFlatMenuKeys(item.children));
+    }
+  });
+  return keys;
+};
+
+export const findMenuByPath = (
+  path: string,
+  items: MenuItem[] = menuConfig,
+): MenuItem | undefined => {
+  for (const item of items) {
+    if (item.path === path) {
+      return item;
+    }
+    if (item.children) {
+      const found = findMenuByPath(path, item.children);
+      if (found) return found;
+    }
+  }
+  return undefined;
+};

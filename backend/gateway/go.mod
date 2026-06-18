@@ -17,6 +17,7 @@ require (
 	github.com/bytedance/sonic v1.9.1
 	github.com/google/uuid v1.3.0
 	github.com/redis/go-redis/v9 v9.3.0
+	github.com/robfig/cron/v3 v3.0.1
 	github.com/spf13/viper v1.17.0
 	go.uber.org/zap v1.26.0
 	golang.org/x/crypto v0.14.0
