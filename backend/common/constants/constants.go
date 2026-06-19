@@ -93,6 +93,8 @@ const (
 	RedisKeyPrefixQueue     = "queue:"
 	RedisKeyPrefixJudicial  = "judicial:"
 	RedisKeyPrefixVideo     = "video:"
+	RedisKeyPrefixBC        = "bc:"
+	RedisKeyPrefixEsign     = "esign:"
 
 	RedisExpireToken     = 86400
 	RedisExpireUser      = 3600
@@ -115,6 +117,8 @@ const (
 	MQTopicJudicialRemind = "judicial_confirmation_remind"
 	MQTopicVideoRecord   = "dispute_video_record"
 	MQTopicVideoQueue    = "dispute_video_queue"
+	MQTopicEsignNotify   = "dispute_esign_notify"
+	MQTopicBlockchainStore = "dispute_blockchain_store"
 
 	MQTagAll     = "*"
 	MQTagSms     = "sms"
@@ -132,6 +136,31 @@ const (
 	MinIOPathSignature   = "signature"
 	MinIOPathAvatar      = "avatar"
 	MinIOPathJudicial    = "judicial"
+
+	EsignStatusDraft     = 0
+	EsignStatusPending   = 10
+	EsignStatusSigning   = 20
+	EsignStatusCompleted = 30
+	EsignStatusExpired   = 40
+	EsignStatusRevoked   = 50
+
+	EsignSignerStatusPending  = 0
+	EsignSignerStatusSigned   = 1
+	EsignSignerStatusRejected = 2
+
+	EsignNotifyStatusNone     = 0
+	EsignNotifyStatusSMS      = 1
+	EsignNotifyStatusWechat   = 2
+	EsignNotifyStatusAll      = 3
+
+	BCStatusPending    = 0
+	BCStatusOnChain    = 1
+	BCStatusFailed     = 2
+	BCStatusVerified   = 3
+
+	BCTypeMediationProtocol = "mediation_protocol"
+	BCTypeEsignDocument     = "esign_document"
+	BCTypeEvidence          = "evidence"
 
 	AITypeSummary   = 1
 	AITypeSuggestion = 2

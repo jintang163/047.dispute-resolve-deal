@@ -94,3 +94,23 @@ trtc:
     bucket: "dispute-trtc-record-1300000000"
     secret_id: "your-cos-secret-id"
     secret_key: "your-cos-secret-key"
+
+fadada:
+  api_domain: "https://api.fadada.com"
+  app_id: "your-fadada-app-id"
+  app_secret: "your-fadada-app-secret"
+  customer_id: "your-fadada-customer-id"
+  cert_path: ""
+  auto_seal: true
+  cross_page_seal: true
+  notify_url: "https://your-domain.com/api/v1/public/esign/fadada-callback"
+
+blockchain:
+  api_endpoint: "https://bc-api.example.com"
+  app_code: "your-bc-app-code"
+  app_key: "your-bc-app-key"
+  app_secret: "your-bc-app-secret"
+  chain_name: "judicial-evidence-chain"
+  contract_addr: "0x1234567890abcdef"
+  cert_template_id: "cert-tpl-001"
+  qr_code_base_url: "https://verify.your-domain.com/cert"

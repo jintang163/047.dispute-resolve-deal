@@ -12,6 +12,7 @@ import {
   SafetyCertificateOutlined,
   BankOutlined,
   VideoCameraOutlined,
+  FileProtectOutlined,
 } from '@ant-design/icons';
 
 export interface MenuItem {
@@ -118,6 +119,25 @@ export const menuConfig: MenuItem[] = [
         label: '法院配置管理',
         icon: React.createElement(BankOutlined),
         path: '/court/config',
+      },
+    ],
+  },
+  {
+    key: 'esign',
+    label: '电子签章与存证',
+    icon: React.createElement(FileProtectOutlined),
+    children: [
+      {
+        key: 'esign-list',
+        label: '签章管理',
+        icon: React.createElement(FileTextOutlined),
+        path: '/esign',
+      },
+      {
+        key: 'esign-certificate',
+        label: '区块链存证',
+        icon: React.createElement(SafetyCertificateOutlined),
+        path: '/esign/certificate',
       },
     ],
   },

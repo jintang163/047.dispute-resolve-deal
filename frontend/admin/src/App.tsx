@@ -17,6 +17,9 @@ import Performance from './pages/Performance/Index';
 import JudicialList from './pages/Judicial/List';
 import JudicialDetail from './pages/Judicial/Detail';
 import CourtConfig from './pages/Judicial/CourtConfig';
+import EsignList from './pages/ESign/List';
+import EsignDetail from './pages/ESign/Detail';
+import CertificateList from './pages/ESign/Certificate';
 import { getToken } from './utils/auth';
 import { useUserStore } from './stores/user';
 
@@ -97,6 +100,11 @@ const App: React.FC = () => {
           </Route>
           <Route path="court">
             <Route path="config" element={<CourtConfig />} />
+          </Route>
+          <Route path="esign">
+            <Route index element={<EsignList />} />
+            <Route path=":caseId/:flowId" element={<EsignDetail />} />
+            <Route path="certificate" element={<CertificateList />} />
           </Route>
         </Route>
         <Route path="*" element={<Navigate to="/dashboard" replace />} />

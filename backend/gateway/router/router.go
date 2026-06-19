@@ -53,6 +53,8 @@ func RegisterRoutes(h *app.Hertz) {
 		public.GET("/dispute/progress", handler.GetDisputeProgress)
 		public.POST("/ai/consult", handler.AIConsult)
 		public.POST("/video/record-callback", handler.RecordCallback)
+		public.POST("/esign/fadada-callback", handler.FaDaDaCallback)
+		public.GET("/blockchain/verify/:certNo", handler.PublicVerifyEvidence)
 	}
 
 	userAuth := api.Group("", middleware.JWTAuthMiddleware())
@@ -138,10 +140,20 @@ func RegisterRoutes(h *app.Hertz) {
 			{
 				esign.POST("", handler.CreateEsignFlow)
 				esign.GET("", handler.GetEsignList)
-				esign.GET("/:esignId", handler.GetEsignDetail)
-				esign.POST("/:esignId/sign", handler.SignDocument)
-				esign.POST("/:esignId/revoke", handler.RevokeEsignFlow)
-				esign.POST("/:esignId/send-code", handler.SendEsignVerifyCode)
+				esign.GET("/:flowId", handler.GetEsignDetail)
+				esign.POST("/:flowId/sign", handler.SignDocument)
+				esign.POST("/:flowId/revoke", handler.RevokeEsignFlow)
+				esign.POST("/:flowId/send-code", handler.SendEsignVerifyCode)
+				esign.GET("/:flowId/progress", handler.GetEsignProgress)
+			}
+
+			blockchainGroup := dispute.Group("/:id/blockchain")
+			{
+				blockchainGroup.POST("/store", handler.StoreEvidenceToBlockchain)
+				blockchainGroup.GET("/certs", handler.GetBlockchainCertList)
+				blockchainGroup.GET("/cert/:certNo", handler.GetBlockchainCertDetail)
+				blockchainGroup.GET("/verify", handler.VerifyBlockchainEvidence)
+				blockchainGroup.GET("/cert/:certNo/download", handler.DownloadBlockchainCert)
 			}
 
 			dispatch := dispute.Group("/dispatch")

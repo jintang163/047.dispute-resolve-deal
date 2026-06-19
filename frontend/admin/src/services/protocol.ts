@@ -55,7 +55,10 @@ export interface MediationProtocol {
   fileUrl?: string;
   createdAt?: string;
   generatedAt?: string;
-  agreementItems?: string;
+  esignFlowId?: string;
+  bcCertNo?: string;
+  bcTxId?: string;
+  bcOnChainTime?: string;
 }
 
 export const protocolService = {

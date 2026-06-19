@@ -20,6 +20,8 @@ type Config struct {
 	Flowable     FlowableConfig     `mapstructure:"flowable"`
 	Court        CourtConfig        `mapstructure:"court"`
 	TRTC         TRTCConfig         `mapstructure:"trtc"`
+	FaDaDa       FaDaDaConfig       `mapstructure:"fadada"`
+	Blockchain   BlockchainConfig   `mapstructure:"blockchain"`
 	Services     ServicesConfig     `mapstructure:"services"`
 	ServicePorts ServicePortsConfig `mapstructure:"service-ports"`
 }
@@ -156,6 +158,28 @@ type TRTCConfig struct {
 	RecordSegmentSec   int    `mapstructure:"record_segment_sec"`
 	MaxQueueSize       int    `mapstructure:"max_queue_size"`
 	QueueCheckInterval int    `mapstructure:"queue_check_interval"`
+}
+
+type FaDaDaConfig struct {
+	APIDomain    string `mapstructure:"api_domain"`
+	AppID        string `mapstructure:"app_id"`
+	AppSecret    string `mapstructure:"app_secret"`
+	CustomerID   string `mapstructure:"customer_id"`
+	CertPath     string `mapstructure:"cert_path"`
+	AutoSeal     bool   `mapstructure:"auto_seal"`
+	CrossPageSeal bool  `mapstructure:"cross_page_seal"`
+	NotifyURL    string `mapstructure:"notify_url"`
+}
+
+type BlockchainConfig struct {
+	APIEndpoint    string `mapstructure:"api_endpoint"`
+	AppCode        string `mapstructure:"app_code"`
+	AppKey         string `mapstructure:"app_key"`
+	AppSecret      string `mapstructure:"app_secret"`
+	ChainName      string `mapstructure:"chain_name"`
+	ContractAddr   string `mapstructure:"contract_addr"`
+	CertTemplateID string `mapstructure:"cert_template_id"`
+	QRCodeBaseURL  string `mapstructure:"qr_code_base_url"`
 }
 
 var (
