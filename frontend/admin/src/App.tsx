@@ -20,6 +20,7 @@ import CourtConfig from './pages/Judicial/CourtConfig';
 import EsignList from './pages/ESign/List';
 import EsignDetail from './pages/ESign/Detail';
 import CertificateList from './pages/ESign/Certificate';
+import PublicVerify from './pages/ESign/Verify';
 import { getToken } from './utils/auth';
 import { useUserStore } from './stores/user';
 
@@ -66,6 +67,7 @@ const App: React.FC = () => {
     <BrowserRouter>
       <Routes>
         <Route path="/login" element={<Login />} />
+        <Route path="/verify/:certNo" element={<PublicVerify />} />
         <Route
           path="/"
           element={

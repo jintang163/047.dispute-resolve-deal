@@ -160,8 +160,8 @@ const CertificateList: React.FC = () => {
           key="qrcode"
           icon={<QrcodeOutlined />}
           onClick={() => {
-            if (record.verifyUrl) window.open(record.verifyUrl, '_blank');
-            else message.info('核验页面暂不可用');
+            const verifyUrl = record.verifyUrl || `${window.location.origin}/verify/${record.certNo}`;
+            window.open(verifyUrl, '_blank');
           }}
         >
           核验

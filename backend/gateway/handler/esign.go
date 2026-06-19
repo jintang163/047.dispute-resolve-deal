@@ -2,7 +2,10 @@ package handler
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
+	"io"
 	"net/http"
 	"strconv"
 	"time"
@@ -19,6 +22,7 @@ import (
 	"github.com/dispute-resolve/common/utils"
 	"github.com/dispute-resolve/gateway/middleware"
 
+	"github.com/apache/rocketmq-client-go/v2/primitive"
 	"github.com/cloudwego/hertz/pkg/app"
 )
 
@@ -82,42 +86,42 @@ func CreateEsignFlow(ctx context.Context, c *app.RequestContext) {
 		expireHours = 72
 	}
 
-	flowID := fmt.Sprintf("ES%s", utils.GenerateIDStr())
+	flowNo := fmt.Sprintf("ES%s", utils.GenerateIDStr())
 	crossPageSeal := int32(0)
 	if req.CrossPageSeal {
 		crossPageSeal = 1
 	}
 
-	tx := database.GetDB().Begin()
+	expireTime := time.Now().Add(time.Duration(expireHours) * time.Hour)
 
-	record := map[string]interface{}{
-		"id":               utils.GenerateID(),
-		"flow_id":          flowID,
-		"case_id":          req.CaseID,
-		"case_no":          caseData.CaseNo,
-		"doc_type":         req.DocType,
-		"doc_title":        req.DocTitle,
-		"doc_content":      req.DocContent,
-		"doc_url":          req.DocURL,
-		"template_id":      req.TemplateID,
-		"signer_count":     len(req.SignerIDs),
-		"signed_count":     0,
-		"status":           constants.EsignStatusPending,
-		"cross_page_seal":  crossPageSeal,
-		"expire_time":      time.Now().Add(time.Duration(expireHours) * time.Hour),
-		"creator_id":       userInfo.UserID,
-		"creator_name":     userInfo.RealName,
-		"organization_id":  userInfo.OrganizationID,
+	flow := &model.EsignFlow{
+		FlowNo:         flowNo,
+		CaseID:         req.CaseID,
+		CaseNo:         caseData.CaseNo,
+		DocType:        req.DocType,
+		DocTitle:       req.DocTitle,
+		DocContent:     req.DocContent,
+		DocURL:         req.DocURL,
+		TemplateID:     req.TemplateID,
+		TotalSignCount: len(req.SignerIDs),
+		SignedCount:    0,
+		Status:         constants.EsignStatusPending,
+		CrossPageSeal:  crossPageSeal,
+		ExpireTime:     &expireTime,
+		CreatorID:      userInfo.UserID,
+		CreatorName:    userInfo.RealName,
+		OrganizationID: userInfo.OrganizationID,
 	}
 
-	if err := tx.Table("esign_record").Create(record).Error; err != nil {
+	tx := database.GetDB().Begin()
+
+	if err := tx.Create(flow).Error; err != nil {
 		tx.Rollback()
-		logger.Error("Create esign record failed", logger.Error(err))
+		logger.Error("Create esign flow failed", logger.Error(err))
 		c.JSON(http.StatusInternalServerError, response.ServerError("创建签署流程失败"))
 		return
 	}
 
-	var signers []map[string]interface{}
 	var signerNames []string
 	var fadadaSigners []fadada.FaDaDaSigner
 
@@ -132,16 +136,19 @@ func CreateEsignFlow(ctx context.Context, c *app.RequestContext) {
 			Where("id = ?", sid).
 			First(&user)
 
-		signers = append(signers, map[string]interface{}{
-			"flow_id":      flowID,
-			"user_id":      sid,
-			"user_name":    user.RealName,
-			"user_phone":   user.Phone,
-			"id_card":      user.IDCard,
-			"sign_order":   i + 1,
-			"sign_status":  constants.EsignSignerStatusPending,
-			"notify_status": constants.EsignNotifyStatusNone,
-		})
+		signer := &model.EsignSigner{
+			FlowID:       flow.ID,
+			UserID:       sid,
+			UserName:     user.RealName,
+			UserPhone:    user.Phone,
+			IDCard:       user.IDCard,
+			SignOrder:    i + 1,
+			SignStatus:   constants.EsignSignerStatusPending,
+			NotifyStatus: constants.EsignNotifyStatusNone,
+		}
+		if err := tx.Create(signer).Error; err != nil {
+			logger.Error("Create esign signer failed", logger.Error(err))
+		}
 
 		signerNames = append(signerNames, user.RealName)
 
@@ -152,10 +159,6 @@ func CreateEsignFlow(ctx context.Context, c *app.RequestContext) {
 			SignType:     "1",
 			AutoSign:     false,
 		})
-	}
-
-	if len(signers) > 0 {
-		tx.Table("esign_signer").Create(signers)
 	}
 
 	fadadaFlowID := ""
@@ -175,16 +178,13 @@ func CreateEsignFlow(ctx context.Context, c *app.RequestContext) {
 			fadadaFlowID = fadadaResult.FlowID
 			fadadaQRCodeURL = fadadaResult.QRCodeURL
 
-			tx.Table("esign_record").
-				Where("flow_id = ?", flowID).
-				Updates(map[string]interface{}{
-					"fadada_flow_id": fadadaFlowID,
-				})
+			tx.Model(&model.EsignFlow{}).Where("id = ?", flow.ID).
+				Update("fadada_flow_id", fadadaFlowID)
 
 			for i, sid := range req.SignerIDs {
 				signURL := fmt.Sprintf("%s&signer=%d", fadadaResult.ShortURL, i+1)
-				tx.Table("esign_signer").
-					Where("flow_id = ? AND user_id = ?", flowID, sid).
+				tx.Model(&model.EsignSigner{}).
+					Where("flow_id = ? AND user_id = ?", flow.ID, sid).
 					Update("fadada_sign_url", signURL)
 			}
 		}
@@ -218,24 +218,29 @@ func CreateEsignFlow(ctx context.Context, c *app.RequestContext) {
 				First(&user)
 
 			verifyCode := utils.GenerateRandomNumber(6)
-			cache.Set(ctx, fmt.Sprintf("esign:verify:%s:%d", flowID, sid), verifyCode, 30*time.Minute)
+			cache.Set(ctx, fmt.Sprintf("esign:verify:%s:%d", flowNo, sid), verifyCode, 30*time.Minute)
 
 			go func(phone, name, code string, uid int64) {
 				msg := map[string]interface{}{
-					"caseId":      req.CaseID,
-					"caseNo":      caseData.CaseNo,
-					"caseTitle":   caseData.Title,
-					"flowId":      flowID,
-					"docTitle":    req.DocTitle,
-					"verifyCode":  code,
-					"expireHours": expireHours,
-					"signer":      name,
-					"phone":       phone,
-					"userId":      uid,
-					"notifyType":  notifyType,
+					"caseId":       req.CaseID,
+					"caseNo":       caseData.CaseNo,
+					"caseTitle":    caseData.Title,
+					"flowId":       flowNo,
+					"docTitle":     req.DocTitle,
+					"verifyCode":   code,
+					"expireHours":  expireHours,
+					"signer":       name,
+					"phone":        phone,
+					"userId":       uid,
+					"notifyType":   notifyType,
 					"fadadaFlowId": fadadaFlowID,
 				}
-				mq.SendMessage(constants.MQTopicEsignNotify, msg)
+				callback := func(ctx context.Context, result *primitive.SendResult, err error) {
+					if err != nil {
+						logger.Error("Send esign notify message failed", logger.Error(err))
+					}
+				}
+				mq.SendAsyncMessage(constants.MQTopicEsignNotify, msg, callback)
 
 				now := time.Now()
 				notifyStatus := constants.EsignNotifyStatusSMS
@@ -244,10 +249,10 @@ func CreateEsignFlow(ctx context.Context, c *app.RequestContext) {
 				} else if notifyType == "all" {
 					notifyStatus = constants.EsignNotifyStatusAll
 				}
-				database.GetDB().Table("esign_signer").
-					Where("flow_id = ? AND user_id = ?", flowID, uid).
+				database.GetDB().Model(&model.EsignSigner{}).
+					Where("flow_id = ? AND user_id = ?", flow.ID, uid).
 					Updates(map[string]interface{}{
-						"notify_status": notifyStatus,
+						"notify_status":  notifyStatus,
 						"notify_sent_at": now,
 					})
 			}(user.Phone, user.RealName, verifyCode, sid)
@@ -255,10 +260,10 @@ func CreateEsignFlow(ctx context.Context, c *app.RequestContext) {
 	}
 
 	c.JSON(http.StatusOK, response.SuccessWithMessage(map[string]interface{}{
-		"flowId":        flowID,
+		"flowId":        flowNo,
 		"docTitle":      req.DocTitle,
 		"signerCount":   len(req.SignerIDs),
-		"expireTime":    time.Now().Add(time.Duration(expireHours) * time.Hour).Format("2006-01-02 15:04:05"),
+		"expireTime":    expireTime.Format("2006-01-02 15:04:05"),
 		"fadadaFlowId":  fadadaFlowID,
 		"qrcodeUrl":     fadadaQRCodeURL,
 		"crossPageSeal": crossPageSeal,
@@ -270,29 +275,29 @@ func GetEsignList(ctx context.Context, c *app.RequestContext) {
 	caseID, _ := strconv.ParseInt(c.Query("caseId"), 10, 64)
 	status, _ := strconv.Atoi(c.DefaultQuery("status", "0"))
 
-	db := database.GetDB().Table("esign_record er").
-		Select("er.*, dc.title as case_title, dc.case_no").
-		Joins("LEFT JOIN dispute_case dc ON er.case_id = dc.id").
-		Where("er.deleted_at IS NULL")
+	db := database.GetDB().Table("esign_flow ef").
+		Select("ef.*, dc.title as case_title, dc.case_no").
+		Joins("LEFT JOIN dispute_case dc ON ef.case_id = dc.id").
+		Where("ef.deleted_at IS NULL")
 
 	if userInfo.Role == constants.RoleMediator {
-		db = db.Where("er.creator_id = ?", userInfo.UserID)
+		db = db.Where("ef.creator_id = ?", userInfo.UserID)
 	} else if userInfo.Role == constants.RoleLeader {
-		db = db.Where("er.organization_id = ?", userInfo.OrganizationID)
+		db = db.Where("ef.organization_id = ?", userInfo.OrganizationID)
 	}
 
 	if caseID > 0 {
-		db = db.Where("er.case_id = ?", caseID)
+		db = db.Where("ef.case_id = ?", caseID)
 	}
 	if status > 0 {
-		db = db.Where("er.status = ?", status)
+		db = db.Where("ef.status = ?", status)
 	}
 
 	var total int64
 	db.Count(&total)
 
 	var list []map[string]interface{}
-	db.Order("er.created_at DESC").
+	db.Order("ef.created_at DESC").
 		Limit(50).
 		Find(&list)
 
@@ -318,61 +323,102 @@ func GetEsignDetail(ctx context.Context, c *app.RequestContext) {
 	flowID := c.Param("flowId")
 	userInfo := middleware.GetUserInfo(c)
 
-	var record map[string]interface{}
-	result := database.GetDB().Table("esign_record er").
-		Select("er.*, dc.title as case_title, dc.case_no").
-		Joins("LEFT JOIN dispute_case dc ON er.case_id = dc.id").
-		Where("er.flow_id = ?", flowID).
-		Find(&record)
-
-	if result.RowsAffected == 0 {
+	var flow model.EsignFlow
+	result := database.GetDB().Where("flow_no = ?", flowID).First(&flow)
+	if result.Error != nil || flow.ID == 0 {
 		c.JSON(http.StatusNotFound, response.NotFound("签署流程不存在"))
 		return
 	}
 
-	var signers []map[string]interface{}
-	database.GetDB().Table("esign_signer").
-		Where("flow_id = ?", flowID).
+	var caseInfo struct {
+		Title string `gorm:"column:title"`
+	}
+	database.GetDB().Table("dispute_case").
+		Select("title").
+		Where("id = ?", flow.CaseID).
+		Scan(&caseInfo)
+
+	var signers []model.EsignSigner
+	database.GetDB().Where("flow_id = ?", flow.ID).
 		Order("sign_order ASC").
 		Find(&signers)
 
-	signStatusMap := map[int]string{
+	signStatusMap := map[int32]string{
 		constants.EsignSignerStatusPending:  "待签署",
 		constants.EsignSignerStatusSigned:   "已签署",
 		constants.EsignSignerStatusRejected: "已拒绝",
 	}
 
-	notifyStatusMap := map[int]string{
+	notifyStatusMap := map[int32]string{
 		constants.EsignNotifyStatusNone:   "未通知",
 		constants.EsignNotifyStatusSMS:    "短信通知",
 		constants.EsignNotifyStatusWechat: "微信通知",
 		constants.EsignNotifyStatusAll:    "全部通知",
 	}
 
-	for _, item := range signers {
-		if s, ok := item["sign_status"].(int); ok {
-			item["sign_status_name"] = signStatusMap[s]
-		}
-		if ns, ok := item["notify_status"].(int); ok {
-			item["notify_status_name"] = notifyStatusMap[ns]
-		}
+	type signerVO struct {
+		model.EsignSigner
+		SignStatusName  string `json:"signStatusName"`
+		NotifyStatusName string `json:"notifyStatusName"`
 	}
 
-	record["signers"] = signers
+	var signerVOs []signerVO
+	for _, s := range signers {
+		vo := signerVO{EsignSigner: s}
+		vo.SignStatusName = signStatusMap[s.SignStatus]
+		vo.NotifyStatusName = notifyStatusMap[s.NotifyStatus]
+		signerVOs = append(signerVOs, vo)
+	}
+
+	statusMap := map[int32]string{
+		constants.EsignStatusDraft:     "草稿",
+		constants.EsignStatusPending:   "待签署",
+		constants.EsignStatusSigning:   "签署中",
+		constants.EsignStatusCompleted: "已完成",
+		constants.EsignStatusExpired:   "已过期",
+		constants.EsignStatusRevoked:   "已撤销",
+	}
+
+	record := map[string]interface{}{
+		"id":                flow.ID,
+		"flowId":            flow.FlowNo,
+		"caseId":            flow.CaseID,
+		"caseNo":            flow.CaseNo,
+		"caseTitle":         caseInfo.Title,
+		"docType":           flow.DocType,
+		"docTitle":          flow.DocTitle,
+		"docUrl":            flow.DocURL,
+		"signedDocumentUrl": flow.SignedDocumentURL,
+		"status":            flow.Status,
+		"statusName":        statusMap[flow.Status],
+		"signerCount":       flow.TotalSignCount,
+		"signedCount":       flow.SignedCount,
+		"crossPageSeal":     flow.CrossPageSeal,
+		"expireTime":        flow.ExpireTime,
+		"fadadaFlowId":      flow.FaDaDaFlowID,
+		"bcCertNo":          flow.BCCertNo,
+		"bcTxId":            flow.BCTxID,
+		"bcOnChainTime":     flow.BCOnChainTime,
+		"bcStatus":          flow.BCStatus,
+		"creatorId":         flow.CreatorID,
+		"creatorName":       flow.CreatorName,
+		"createdAt":         flow.CreatedAt,
+		"signers":           signerVOs,
+	}
 
 	var bcCert model.BlockchainCertificate
-	database.GetDB().Where("flow_id = ? AND deleted_at IS NULL", flowID).First(&bcCert)
+	database.GetDB().Where("flow_id = ? AND deleted_at IS NULL", flow.FlowNo).First(&bcCert)
 	if bcCert.ID > 0 {
-		record["blockchain_cert"] = map[string]interface{}{
-			"certNo":        bcCert.CertNo,
-			"txId":          bcCert.TxID,
-			"blockHeight":   bcCert.BlockHeight,
-			"onChainTime":   bcCert.OnChainTime,
-			"certUrl":       bcCert.CertURL,
-			"qrcodeUrl":     bcCert.QRCodeURL,
-			"verifyUrl":     bcCert.VerifyURL,
-			"status":        bcCert.Status,
-			"evidenceHash":  bcCert.EvidenceHash,
+		record["blockchainCert"] = map[string]interface{}{
+			"certNo":       bcCert.CertNo,
+			"txId":         bcCert.TxID,
+			"blockHeight":  bcCert.BlockHeight,
+			"onChainTime":  bcCert.OnChainTime,
+			"certUrl":      bcCert.CertURL,
+			"qrcodeUrl":    bcCert.QRCodeURL,
+			"verifyUrl":    bcCert.VerifyURL,
+			"status":       bcCert.Status,
+			"evidenceHash": bcCert.EvidenceHash,
 		}
 	}
 
@@ -388,58 +434,34 @@ func SignDocument(ctx context.Context, c *app.RequestContext) {
 
 	userInfo := middleware.GetUserInfo(c)
 
-	var record struct {
-		ID              int64     `gorm:"column:id"`
-		CaseID          int64     `gorm:"column:case_id"`
-		CaseNo          string    `gorm:"column:case_no"`
-		DocTitle        string    `gorm:"column:doc_title"`
-		Status          int32     `gorm:"column:status"`
-		SignerCount     int32     `gorm:"column:signer_count"`
-		SignedCount     int32     `gorm:"column:signed_count"`
-		ExpireTime      time.Time `gorm:"column:expire_time"`
-		FaDaDaFlowID    string    `gorm:"column:fadada_flow_id"`
-		DocURL          string    `gorm:"column:doc_url"`
-	}
+	var flow model.EsignFlow
+	result := database.GetDB().Where("id = ?", req.RecordID).First(&flow)
 
-	result := database.GetDB().Table("esign_record").
-		Where("id = ?", req.RecordID).
-		First(&record)
-
-	if result.Error != nil {
+	if result.Error != nil || flow.ID == 0 {
 		c.JSON(http.StatusNotFound, response.NotFound("签署记录不存在"))
 		return
 	}
 
-	if record.Status == constants.EsignStatusCompleted {
+	if flow.Status == constants.EsignStatusCompleted {
 		c.JSON(http.StatusBadRequest, response.BadRequest("该签署流程已完成"))
 		return
 	}
-	if record.Status == constants.EsignStatusExpired {
+	if flow.Status == constants.EsignStatusExpired {
 		c.JSON(http.StatusBadRequest, response.BadRequest("该签署流程已过期"))
 		return
 	}
-	if record.Status == constants.EsignStatusRevoked {
+	if flow.Status == constants.EsignStatusRevoked {
 		c.JSON(http.StatusBadRequest, response.BadRequest("该签署流程已撤销"))
 		return
 	}
 
-	if time.Now().After(record.ExpireTime) {
+	if flow.ExpireTime != nil && time.Now().After(*flow.ExpireTime) {
 		c.JSON(http.StatusBadRequest, response.BadRequest("该签署流程已过期"))
 		return
 	}
 
-	var signer struct {
-		ID         int64  `gorm:"column:id"`
-		SignStatus int32  `gorm:"column:sign_status"`
-		SignOrder  int32  `gorm:"column:sign_order"`
-		UserName   string `gorm:"column:user_name"`
-	}
-
-	database.GetDB().Table("esign_signer").
-		Where("flow_id = ? AND user_id = ?",
-			database.GetDB().Table("esign_record").Select("flow_id").Where("id = ?", req.RecordID),
-			userInfo.UserID).
-		First(&signer)
+	var signer model.EsignSigner
+	database.GetDB().Where("flow_id = ? AND user_id = ?", flow.ID, userInfo.UserID).First(&signer)
 
 	if signer.ID == 0 {
 		c.JSON(http.StatusForbidden, response.Forbidden("您不是该文件的签署人"))
@@ -451,9 +473,7 @@ func SignDocument(ctx context.Context, c *app.RequestContext) {
 		return
 	}
 
-	cacheKey := fmt.Sprintf("esign:verify:%s:%d",
-		database.GetDB().Table("esign_record").Select("flow_id").Where("id = ?", req.RecordID),
-		userInfo.UserID)
+	cacheKey := fmt.Sprintf("esign:verify:%s:%d", flow.FlowNo, userInfo.UserID)
 
 	if req.VerifyCode != "" {
 		cachedCode, err := cache.Get(ctx, cacheKey)
@@ -468,35 +488,31 @@ func SignDocument(ctx context.Context, c *app.RequestContext) {
 	tx := database.GetDB().Begin()
 
 	now := time.Now()
-	tx.Table("esign_signer").
-		Where("id = ?", signer.ID).
-		Updates(map[string]interface{}{
-			"sign_status":   constants.EsignSignerStatusSigned,
-			"sign_time":     now,
-			"signature_url": signatureURL,
-			"sign_ip":       c.ClientIP(),
-		})
+	tx.Model(&signer).Updates(map[string]interface{}{
+		"sign_status":   constants.EsignSignerStatusSigned,
+		"sign_time":     now,
+		"signature_url": signatureURL,
+		"sign_ip":       c.ClientIP(),
+	})
 
-	newSignedCount := record.SignedCount + 1
+	newSignedCount := flow.SignedCount + 1
 	status := int32(constants.EsignStatusSigning)
-	allSigned := newSignedCount >= record.SignerCount
+	allSigned := newSignedCount >= flow.TotalSignCount
 	if allSigned {
 		status = constants.EsignStatusCompleted
 	}
 
-	tx.Table("esign_record").
-		Where("id = ?", record.ID).
-		Updates(map[string]interface{}{
-			"signed_count":   newSignedCount,
-			"status":         status,
-			"last_sign_time": now,
-		})
+	tx.Model(&flow).Updates(map[string]interface{}{
+		"signed_count":   newSignedCount,
+		"status":         status,
+		"last_sign_time": now,
+	})
 
 	history := map[string]interface{}{
-		"case_id":          record.CaseID,
-		"case_no":          record.CaseNo,
+		"case_id":          flow.CaseID,
+		"case_no":          flow.CaseNo,
 		"operation_type":   "ESIGN_SIGN",
-		"operation_detail": fmt.Sprintf("签署文件: %s，签署人: %s", record.DocTitle, signer.UserName),
+		"operation_detail": fmt.Sprintf("签署文件: %s，签署人: %s", flow.DocTitle, signer.UserName),
 		"operator_id":      userInfo.UserID,
 		"operator_name":    userInfo.RealName,
 	}
@@ -506,19 +522,19 @@ func SignDocument(ctx context.Context, c *app.RequestContext) {
 
 	cache.Del(ctx, cacheKey)
 
-	if allSigned && record.FaDaDaFlowID != "" {
+	if allSigned && flow.FaDaDaFlowID != "" {
 		go func() {
 			fadadaClient := fadada.GetClient()
 			if fadadaClient != nil {
-				signedDocURL, err := fadadaClient.GetSignedDocument(record.FaDaDaFlowID)
+				signedDocURL, err := fadadaClient.GetSignedDocument(flow.FaDaDaFlowID)
 				if err != nil {
 					logger.Error("Download signed document from FaDaDa failed", logger.Error(err))
 				} else if signedDocURL != "" {
-					database.GetDB().Table("esign_record").
-						Where("id = ?", record.ID).
+					database.GetDB().Model(&model.EsignFlow{}).
+						Where("id = ?", flow.ID).
 						Update("signed_document_url", signedDocURL)
 
-					go storeSignedDocToBlockchain(record.ID, record.CaseID, record.CaseNo, record.DocTitle, signedDocURL, userInfo.UserID)
+					go storeSignedDocToBlockchain(flow.ID, flow.CaseID, flow.CaseNo, flow.DocTitle, flow.FlowNo, signedDocURL, userInfo.UserID)
 				}
 			}
 		}()
@@ -526,17 +542,22 @@ func SignDocument(ctx context.Context, c *app.RequestContext) {
 
 	go func() {
 		notifyMsg := map[string]interface{}{
-			"type":       "esign_sign_progress",
-			"caseId":     record.CaseID,
-			"caseNo":     record.CaseNo,
-			"docTitle":   record.DocTitle,
-			"signer":     signer.UserName,
+			"type":        "esign_sign_progress",
+			"caseId":      flow.CaseID,
+			"caseNo":      flow.CaseNo,
+			"docTitle":    flow.DocTitle,
+			"signer":      signer.UserName,
 			"signedCount": newSignedCount,
-			"totalCount": record.SignerCount,
-			"allSigned":  allSigned,
-			"signTime":   now.Format("2006-01-02 15:04:05"),
+			"totalCount":  flow.TotalSignCount,
+			"allSigned":   allSigned,
+			"signTime":    now.Format("2006-01-02 15:04:05"),
 		}
-		mq.SendMessage(constants.MQTopicEsignNotify, notifyMsg)
+		callback := func(ctx context.Context, result *primitive.SendResult, err error) {
+			if err != nil {
+				logger.Error("Send esign sign progress notify failed", logger.Error(err))
+			}
+		}
+		mq.SendAsyncMessage(constants.MQTopicEsignNotify, notifyMsg, callback)
 	}()
 
 	c.JSON(http.StatusOK, response.SuccessWithMessage(map[string]interface{}{
@@ -546,34 +567,64 @@ func SignDocument(ctx context.Context, c *app.RequestContext) {
 	}, "签署成功"))
 }
 
-func storeSignedDocToBlockchain(recordID int64, caseID int64, caseNo, docTitle, docURL string, creatorID int64) {
+func downloadPDFAndHash(docURL string) ([]byte, string, error) {
+	client := &http.Client{Timeout: 60 * time.Second}
+	resp, err := client.Get(docURL)
+	if err != nil {
+		return nil, "", fmt.Errorf("下载PDF失败: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, "", fmt.Errorf("下载PDF失败, HTTP状态码: %d", resp.StatusCode)
+	}
+
+	pdfData, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, "", fmt.Errorf("读取PDF数据失败: %v", err)
+	}
+
+	hash := sha256.Sum256(pdfData)
+	pdfHash := hex.EncodeToString(hash[:])
+
+	return pdfData, pdfHash, nil
+}
+
+func storeSignedDocToBlockchain(flowID int64, caseID int64, caseNo, docTitle, flowNo, docURL string, creatorID int64) {
 	bcClient := blockchain.GetClient()
 	if bcClient == nil {
 		logger.Error("Blockchain client not initialized")
 		return
 	}
 
-	pdfHash := ""
+	_, pdfHash, err := downloadPDFAndHash(docURL)
+	if err != nil {
+		logger.Error("Download PDF and compute hash failed", logger.Error(err))
+		pdfHash = ""
+	} else {
+		logger.Info("PDF hash computed", logger.String("pdfHash", pdfHash))
+	}
+
 	storeResult, err := bcClient.StoreEvidence(&blockchain.StoreEvidenceReq{
-		EvidenceID:   fmt.Sprintf("ESIGN-%d", recordID),
+		EvidenceID:   fmt.Sprintf("ESIGN-%d", flowID),
 		EvidenceType: constants.BCTypeEsignDocument,
 		EvidenceHash: pdfHash,
 		EvidenceName: docTitle,
 		Description:  fmt.Sprintf("调解协议书电子签章文档上链: %s", docTitle),
-		Metadata:     fmt.Sprintf(`{"caseId":%d,"caseNo":"%s","recordId":%d,"docUrl":"%s"}`, caseID, caseNo, recordID, docURL),
+		Metadata:     fmt.Sprintf(`{"caseId":%d,"caseNo":"%s","flowNo":"%s","docUrl":"%s"}`, caseID, caseNo, flowNo, docURL),
 	})
 
 	if err != nil {
 		logger.Error("Store signed doc to blockchain failed", logger.Error(err))
-		database.GetDB().Table("esign_record").
-			Where("id = ?", recordID).
+		database.GetDB().Model(&model.EsignFlow{}).
+			Where("id = ?", flowID).
 			Update("bc_status", constants.BCStatusFailed)
 		return
 	}
 
 	now := time.Now()
-	database.GetDB().Table("esign_record").
-		Where("id = ?", recordID).
+	database.GetDB().Model(&model.EsignFlow{}).
+		Where("id = ?", flowID).
 		Updates(map[string]interface{}{
 			"bc_cert_no":      storeResult.CertNo,
 			"bc_tx_id":        storeResult.TxID,
@@ -591,12 +642,12 @@ func storeSignedDocToBlockchain(recordID int64, caseID int64, caseNo, docTitle, 
 				ID: utils.GenerateID(),
 			},
 			CertNo:       certNo,
-			EvidenceID:   fmt.Sprintf("ESIGN-%d", recordID),
+			EvidenceID:   fmt.Sprintf("ESIGN-%d", flowID),
 			EvidenceType: constants.BCTypeEsignDocument,
 			EvidenceName: docTitle,
 			EvidenceHash: pdfHash,
 			CaseID:       caseID,
-			FlowID:       fmt.Sprintf("ES%d", recordID),
+			FlowID:       flowNo,
 			TxID:         storeResult.TxID,
 			BlockHeight:  storeResult.BlockHeight,
 			OnChainTime:  &now,
@@ -604,25 +655,30 @@ func storeSignedDocToBlockchain(recordID int64, caseID int64, caseNo, docTitle, 
 			QRCodeURL:    certResult.QRCodeURL,
 			VerifyURL:    certResult.VerifyURL,
 			Status:       constants.BCStatusOnChain,
-			Metadata:     fmt.Sprintf(`{"caseNo":"%s","docUrl":"%s"}`, caseNo, docURL),
+			Metadata:     fmt.Sprintf(`{"caseNo":"%s","flowNo":"%s","docUrl":"%s"}`, caseNo, flowNo, docURL),
 			CreatedBy:    creatorID,
 		}
 		database.GetDB().Create(cert)
 	}
 
-	mq.SendAsync(constants.MQTopicEsignNotify, map[string]interface{}{
-		"type":       "esign_blockchain_stored",
-		"caseId":     caseID,
-		"caseNo":     caseNo,
-		"docTitle":   docTitle,
-		"certNo":     certNo,
-		"txId":       storeResult.TxID,
+	callback := func(ctx context.Context, result *primitive.SendResult, err error) {
+		if err != nil {
+			logger.Error("Send esign blockchain stored notify failed", logger.Error(err))
+		}
+	}
+	mq.SendAsyncMessage(constants.MQTopicEsignNotify, map[string]interface{}{
+		"type":        "esign_blockchain_stored",
+		"caseId":      caseID,
+		"caseNo":      caseNo,
+		"docTitle":    docTitle,
+		"certNo":      certNo,
+		"txId":        storeResult.TxID,
 		"blockHeight": storeResult.BlockHeight,
-	})
+	}, callback)
 }
 
 func RevokeEsignFlow(ctx context.Context, c *app.RequestContext) {
-	flowID := c.Param("flowId")
+	flowNo := c.Param("flowId")
 	userInfo := middleware.GetUserInfo(c)
 
 	var req struct {
@@ -633,39 +689,28 @@ func RevokeEsignFlow(ctx context.Context, c *app.RequestContext) {
 		return
 	}
 
-	var record struct {
-		ID           int64  `gorm:"column:id"`
-		CaseID       int64  `gorm:"column:case_id"`
-		CaseNo       string `gorm:"column:case_no"`
-		DocTitle     string `gorm:"column:doc_title"`
-		Status       int32  `gorm:"column:status"`
-		CreatorID    int64  `gorm:"column:creator_id"`
-		FaDaDaFlowID string `gorm:"column:fadada_flow_id"`
-	}
+	var flow model.EsignFlow
+	result := database.GetDB().Where("flow_no = ?", flowNo).First(&flow)
 
-	result := database.GetDB().Table("esign_record").
-		Where("flow_id = ?", flowID).
-		First(&record)
-
-	if result.Error != nil {
+	if result.Error != nil || flow.ID == 0 {
 		c.JSON(http.StatusNotFound, response.NotFound("签署流程不存在"))
 		return
 	}
 
-	if record.CreatorID != userInfo.UserID && userInfo.Role > constants.RoleLeader {
+	if flow.CreatorID != userInfo.UserID && userInfo.Role > constants.RoleLeader {
 		c.JSON(http.StatusForbidden, response.Forbidden("只有流程创建者或领导可以撤销"))
 		return
 	}
 
-	if record.Status == constants.EsignStatusCompleted {
+	if flow.Status == constants.EsignStatusCompleted {
 		c.JSON(http.StatusBadRequest, response.BadRequest("已完成的流程不能撤销"))
 		return
 	}
 
-	if record.FaDaDaFlowID != "" {
+	if flow.FaDaDaFlowID != "" {
 		fadadaClient := fadada.GetClient()
 		if fadadaClient != nil {
-			if err := fadadaClient.RevokeSignFlow(record.FaDaDaFlowID, req.Reason); err != nil {
+			if err := fadadaClient.RevokeSignFlow(flow.FaDaDaFlowID, req.Reason); err != nil {
 				logger.Error("FaDaDa revoke sign flow failed", logger.Error(err))
 			}
 		}
@@ -673,43 +718,44 @@ func RevokeEsignFlow(ctx context.Context, c *app.RequestContext) {
 
 	tx := database.GetDB().Begin()
 
-	tx.Table("esign_record").
-		Where("id = ?", record.ID).
-		Updates(map[string]interface{}{
-			"status":        constants.EsignStatusRevoked,
-			"revoke_reason": req.Reason,
-			"revoke_time":   time.Now(),
-			"revoke_by":     userInfo.UserID,
-		})
+	now := time.Now()
+	tx.Model(&flow).Updates(map[string]interface{}{
+		"status":        constants.EsignStatusRevoked,
+		"revoke_reason": req.Reason,
+		"revoke_time":   now,
+		"revoke_by":     userInfo.UserID,
+	})
 
-	var signers []map[string]interface{}
-	database.GetDB().Table("esign_signer").
-		Select("user_id, user_name, user_phone").
-		Where("flow_id = ?", flowID).
-		Find(&signers)
+	var signers []model.EsignSigner
+	database.GetDB().Where("flow_id = ?", flow.ID).Find(&signers)
 
 	for _, s := range signers {
 		go func(phone, name string) {
 			msg := map[string]interface{}{
-				"caseId":      record.CaseID,
-				"caseNo":      record.CaseNo,
-				"flowId":      flowID,
-				"docTitle":    record.DocTitle,
+				"caseId":       flow.CaseID,
+				"caseNo":       flow.CaseNo,
+				"flowId":       flowNo,
+				"docTitle":     flow.DocTitle,
 				"revokeReason": req.Reason,
-				"revokeBy":    userInfo.RealName,
-				"signer":      name,
-				"phone":       phone,
-				"notifyType":  "sms",
+				"revokeBy":     userInfo.RealName,
+				"signer":       name,
+				"phone":        phone,
+				"notifyType":   "sms",
 			}
-			mq.SendMessage(constants.MQTopicEsignNotify, msg)
-		}(s["user_phone"].(string), s["user_name"].(string))
+			callback := func(ctx context.Context, result *primitive.SendResult, err error) {
+				if err != nil {
+					logger.Error("Send esign revoke notify failed", logger.Error(err))
+				}
+			}
+			mq.SendAsyncMessage(constants.MQTopicEsignNotify, msg, callback)
+		}(s.UserPhone, s.UserName)
 	}
 
 	history := map[string]interface{}{
-		"case_id":          record.CaseID,
-		"case_no":          record.CaseNo,
+		"case_id":          flow.CaseID,
+		"case_no":          flow.CaseNo,
 		"operation_type":   "ESIGN_REVOKE",
-		"operation_detail": fmt.Sprintf("撤销签署流程: %s，原因: %s", record.DocTitle, req.Reason),
+		"operation_detail": fmt.Sprintf("撤销签署流程: %s，原因: %s", flow.DocTitle, req.Reason),
 		"operator_id":      userInfo.UserID,
 		"operator_name":    userInfo.RealName,
 	}
@@ -721,32 +767,19 @@ func RevokeEsignFlow(ctx context.Context, c *app.RequestContext) {
 }
 
 func SendEsignVerifyCode(ctx context.Context, c *app.RequestContext) {
-	flowID := c.Query("flowId")
+	flowNo := c.Query("flowId")
 	userInfo := middleware.GetUserInfo(c)
 
-	var record struct {
-		CaseID   int64  `gorm:"column:case_id"`
-		CaseNo   string `gorm:"column:case_no"`
-		DocTitle string `gorm:"column:doc_title"`
-	}
+	var flow model.EsignFlow
+	result := database.GetDB().Where("flow_no = ?", flowNo).First(&flow)
 
-	result := database.GetDB().Table("esign_record").
-		Where("flow_id = ?", flowID).
-		First(&record)
-
-	if result.Error != nil {
+	if result.Error != nil || flow.ID == 0 {
 		c.JSON(http.StatusNotFound, response.NotFound("签署流程不存在"))
 		return
 	}
 
-	var signer struct {
-		UserPhone string `gorm:"column:user_phone"`
-		UserName  string `gorm:"column:user_name"`
-	}
-
-	database.GetDB().Table("esign_signer").
-		Where("flow_id = ? AND user_id = ?", flowID, userInfo.UserID).
-		First(&signer)
+	var signer model.EsignSigner
+	database.GetDB().Where("flow_id = ? AND user_id = ?", flow.ID, userInfo.UserID).First(&signer)
 
 	if signer.UserPhone == "" {
 		c.JSON(http.StatusForbidden, response.Forbidden("您不是该文件的签署人"))
@@ -754,21 +787,26 @@ func SendEsignVerifyCode(ctx context.Context, c *app.RequestContext) {
 	}
 
 	verifyCode := utils.GenerateRandomNumber(6)
-	cacheKey := fmt.Sprintf("esign:verify:%s:%d", flowID, userInfo.UserID)
+	cacheKey := fmt.Sprintf("esign:verify:%s:%d", flowNo, userInfo.UserID)
 	cache.Set(ctx, cacheKey, verifyCode, 30*time.Minute)
 
 	go func() {
 		msg := map[string]interface{}{
-			"caseId":     record.CaseID,
-			"caseNo":     record.CaseNo,
-			"flowId":     flowID,
-			"docTitle":   record.DocTitle,
+			"caseId":     flow.CaseID,
+			"caseNo":     flow.CaseNo,
+			"flowId":     flowNo,
+			"docTitle":   flow.DocTitle,
 			"verifyCode": verifyCode,
 			"signer":     signer.UserName,
 			"phone":      signer.UserPhone,
 			"notifyType": "sms",
 		}
-		mq.SendMessage(constants.MQTopicEsignNotify, msg)
+		callback := func(ctx context.Context, result *primitive.SendResult, err error) {
+			if err != nil {
+				logger.Error("Send esign verify code notify failed", logger.Error(err))
+			}
+		}
+		mq.SendAsyncMessage(constants.MQTopicEsignNotify, msg, callback)
 	}()
 
 	c.JSON(http.StatusOK, response.SuccessWithMessage(nil, "验证码已发送"))
@@ -791,20 +829,10 @@ func FaDaDaCallback(ctx context.Context, c *app.RequestContext) {
 		return
 	}
 
-	var record struct {
-		ID          int64  `gorm:"column:id"`
-		CaseID      int64  `gorm:"column:case_id"`
-		CaseNo      string `gorm:"column:case_no"`
-		DocTitle    string `gorm:"column:doc_title"`
-		SignerCount int32  `gorm:"column:signer_count"`
-		Status      int32  `gorm:"column:status"`
-	}
+	var flow model.EsignFlow
+	database.GetDB().Where("fadada_flow_id = ?", flowID).First(&flow)
 
-	database.GetDB().Table("esign_record").
-		Where("fadada_flow_id = ?", flowID).
-		First(&record)
-
-	if record.ID == 0 {
+	if flow.ID == 0 {
 		c.JSON(http.StatusNotFound, response.NotFound("签署流程不存在"))
 		return
 	}
@@ -821,8 +849,8 @@ func FaDaDaCallback(ctx context.Context, c *app.RequestContext) {
 		for _, s := range progress.Signers {
 			if s.Status == "2" {
 				signedCount++
-				database.GetDB().Table("esign_signer").
-					Where("flow_id = ? AND user_name = ?", record.ID, s.CustomerName).
+				database.GetDB().Model(&model.EsignSigner{}).
+					Where("flow_id = ? AND user_name = ?", flow.ID, s.CustomerName).
 					Updates(map[string]interface{}{
 						"sign_status": constants.EsignSignerStatusSigned,
 						"sign_time":   time.Now(),
@@ -831,35 +859,37 @@ func FaDaDaCallback(ctx context.Context, c *app.RequestContext) {
 		}
 
 		newStatus := int32(constants.EsignStatusSigning)
-		if signedCount >= int(record.SignerCount) {
+		if signedCount >= flow.TotalSignCount {
 			newStatus = constants.EsignStatusCompleted
 		}
 
-		database.GetDB().Table("esign_record").
-			Where("id = ?", record.ID).
-			Updates(map[string]interface{}{
-				"status":        newStatus,
-				"signed_count":  signedCount,
-				"last_sign_time": time.Now(),
-			})
-
-		mq.SendAsync(constants.MQTopicEsignNotify, map[string]interface{}{
-			"type":        "esign_fadada_callback",
-			"caseId":      record.CaseID,
-			"caseNo":      record.CaseNo,
-			"docTitle":    record.DocTitle,
-			"signedCount": signedCount,
-			"totalCount":  record.SignerCount,
-			"allSigned":   signedCount >= int(record.SignerCount),
+		database.GetDB().Model(&flow).Updates(map[string]interface{}{
+			"status":         newStatus,
+			"signed_count":   signedCount,
+			"last_sign_time": time.Now(),
 		})
+
+		callback := func(ctx context.Context, result *primitive.SendResult, err error) {
+			if err != nil {
+				logger.Error("Send esign fadada callback notify failed", logger.Error(err))
+			}
+		}
+		mq.SendAsyncMessage(constants.MQTopicEsignNotify, map[string]interface{}{
+			"type":        "esign_fadada_callback",
+			"caseId":      flow.CaseID,
+			"caseNo":      flow.CaseNo,
+			"docTitle":    flow.DocTitle,
+			"signedCount": signedCount,
+			"totalCount":  flow.TotalSignCount,
+			"allSigned":   signedCount >= flow.TotalSignCount,
+		}, callback)
 
 		if newStatus == constants.EsignStatusCompleted {
 			go func() {
 				signedDocURL, _ := fadadaClient.GetSignedDocument(flowID)
 				if signedDocURL != "" {
-					database.GetDB().Table("esign_record").
-						Where("id = ?", record.ID).
-						Update("signed_document_url", signedDocURL)
+					database.GetDB().Model(&flow).Update("signed_document_url", signedDocURL)
+					go storeSignedDocToBlockchain(flow.ID, flow.CaseID, flow.CaseNo, flow.DocTitle, flow.FlowNo, signedDocURL, flow.CreatorID)
 				}
 			}()
 		}
@@ -869,55 +899,51 @@ func FaDaDaCallback(ctx context.Context, c *app.RequestContext) {
 }
 
 func GetEsignProgress(ctx context.Context, c *app.RequestContext) {
-	flowID := c.Param("flowId")
+	flowNo := c.Param("flowId")
 
-	var record struct {
-		ID          int64  `gorm:"column:id"`
-		Status      int32  `gorm:"column:status"`
-		SignerCount int32  `gorm:"column:signer_count"`
-		SignedCount int32  `gorm:"column:signed_count"`
-		FaDaDaFlowID string `gorm:"column:fadada_flow_id"`
-	}
+	var flow model.EsignFlow
+	database.GetDB().Where("flow_no = ?", flowNo).First(&flow)
 
-	database.GetDB().Table("esign_record").
-		Where("flow_id = ?", flowID).
-		First(&record)
-
-	if record.ID == 0 {
+	if flow.ID == 0 {
 		c.JSON(http.StatusNotFound, response.NotFound("签署流程不存在"))
 		return
 	}
 
-	var signers []map[string]interface{}
-	database.GetDB().Table("esign_signer").
-		Where("flow_id = ?", flowID).
+	var signers []model.EsignSigner
+	database.GetDB().Where("flow_id = ?", flow.ID).
 		Order("sign_order ASC").
 		Find(&signers)
 
-	signStatusMap := map[int]string{
+	signStatusMap := map[int32]string{
 		constants.EsignSignerStatusPending:  "待签署",
 		constants.EsignSignerStatusSigned:   "已签署",
 		constants.EsignSignerStatusRejected: "已拒绝",
 	}
 
-	for _, item := range signers {
-		if s, ok := item["sign_status"].(int); ok {
-			item["sign_status_name"] = signStatusMap[s]
-		}
+	type signerVO struct {
+		model.EsignSigner
+		SignStatusName string `json:"signStatusName"`
+	}
+
+	var signerVOs []signerVO
+	for _, s := range signers {
+		vo := signerVO{EsignSigner: s}
+		vo.SignStatusName = signStatusMap[s.SignStatus]
+		signerVOs = append(signerVOs, vo)
 	}
 
 	result := map[string]interface{}{
-		"flowId":      flowID,
-		"status":      record.Status,
-		"signedCount": record.SignedCount,
-		"totalCount":  record.SignerCount,
-		"signers":     signers,
+		"flowId":      flowNo,
+		"status":      flow.Status,
+		"signedCount": flow.SignedCount,
+		"totalCount":  flow.TotalSignCount,
+		"signers":     signerVOs,
 	}
 
-	if record.FaDaDaFlowID != "" {
+	if flow.FaDaDaFlowID != "" {
 		fadadaClient := fadada.GetClient()
 		if fadadaClient != nil {
-			progress, err := fadadaClient.GetSignProgress(record.FaDaDaFlowID)
+			progress, err := fadadaClient.GetSignProgress(flow.FaDaDaFlowID)
 			if err == nil {
 				result["fadadaProgress"] = progress
 			}

@@ -1,4 +1,5 @@
 import { request } from '../utils/request';
+import axios from 'axios';
 
 export interface EsignFlow {
   id: string;
@@ -135,4 +136,7 @@ export const blockchainService = {
 
   downloadCert: (caseId: number | string, certNo: string) =>
     request.get(`/dispute/${caseId}/blockchain/cert/${certNo}/download`),
+
+  publicVerify: (certNo: string) =>
+    axios.get(`/api/v1/public/blockchain/verify/${certNo}`).then(res => res.data),
 };

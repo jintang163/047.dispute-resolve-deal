@@ -2,8 +2,12 @@ package impl
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"time"
 
 	"github.com/dispute-resolve/common/blockchain"
@@ -15,6 +19,8 @@ import (
 	"github.com/dispute-resolve/common/mq"
 	"github.com/dispute-resolve/common/utils"
 	"github.com/dispute-resolve/gateway/service"
+
+	"github.com/apache/rocketmq-client-go/v2/primitive"
 )
 
 type ESignServiceImpl struct{}
@@ -34,11 +40,13 @@ const (
 )
 
 func (s *ESignServiceImpl) CreateEsignFlow(ctx context.Context, caseID int64, title string, documentIDs []int64, signerIDs []int64, creatorID int64) (map[string]interface{}, error) {
-	var caseInfo map[string]interface{}
+	var caseInfo struct {
+		CaseNo string `gorm:"column:case_no"`
+	}
 	database.GetDB().Table("dispute_case").
 		Where("id = ? AND deleted_at IS NULL", caseID).
-		First(&caseInfo)
-	if caseInfo == nil {
+		Scan(&caseInfo)
+	if caseInfo.CaseNo == "" {
 		return nil, fmt.Errorf("案件不存在")
 	}
 
@@ -85,13 +93,14 @@ func (s *ESignServiceImpl) CreateEsignFlow(ctx context.Context, caseID int64, ti
 	}
 
 	flow := &model.EsignFlow{
-		CaseID:       caseID,
-		FlowNo:       flowNo,
-		DocumentName: title,
-		Status:       constants.EsignStatusPending,
+		CaseID:         caseID,
+		CaseNo:         caseInfo.CaseNo,
+		FlowNo:         flowNo,
+		DocTitle:       title,
+		Status:         constants.EsignStatusPending,
 		TotalSignCount: len(signerIDs),
-		FaDaDaFlowID: fadadaFlowID,
-		CreatedBy:    creatorID,
+		FaDaDaFlowID:   fadadaFlowID,
+		CreatorID:      creatorID,
 	}
 
 	if err := database.GetDB().Create(flow).Error; err != nil {
@@ -115,7 +124,7 @@ func (s *ESignServiceImpl) GetEsignList(ctx context.Context, caseID int64, page,
 	db := database.GetDB().Table("esign_flow ef").
 		Select("ef.*, dc.case_no, dc.title as case_title, u.real_name as creator_name").
 		Joins("LEFT JOIN dispute_case dc ON ef.case_id = dc.id").
-		Joins("LEFT JOIN user u ON ef.creator_id = u.id").
+		Joins("LEFT JOIN sys_user u ON ef.creator_id = u.id").
 		Where("ef.deleted_at IS NULL")
 
 	if caseID > 0 {
@@ -123,7 +132,7 @@ func (s *ESignServiceImpl) GetEsignList(ctx context.Context, caseID int64, page,
 	}
 
 	if userID > 0 && role != constants.RoleAdmin {
-		db = db.Where("(ef.creator_id = ? OR FIND_IN_SET(?, ef.signer_ids))", userID, userID)
+		db = db.Where("(ef.creator_id = ? OR EXISTS (SELECT 1 FROM esign_signer WHERE esign_signer.flow_id = ef.id AND esign_signer.user_id = ? AND esign_signer.deleted_at IS NULL))", userID, userID)
 	}
 
 	var total int64
@@ -157,19 +166,13 @@ func (s *ESignServiceImpl) GetEsignList(ctx context.Context, caseID int64, page,
 }
 
 func (s *ESignServiceImpl) GetEsignDetail(ctx context.Context, esignID int64, userID int64) (map[string]interface{}, error) {
-	var flow map[string]interface{}
-	result := database.GetDB().Table("esign_flow ef").
-		Select("ef.*, dc.case_no, dc.title as case_title, u.real_name as creator_name").
-		Joins("LEFT JOIN dispute_case dc ON ef.case_id = dc.id").
-		Joins("LEFT JOIN user u ON ef.creator_id = u.id").
-		Where("ef.id = ? AND ef.deleted_at IS NULL", esignID).
-		First(&flow)
-
+	var flow model.EsignFlow
+	result := database.GetDB().Where("id = ? AND deleted_at IS NULL", esignID).First(&flow)
 	if result.Error != nil {
 		return nil, result.Error
 	}
 
-	statusMap := map[int]string{
+	statusMap := map[int32]string{
 		constants.EsignStatusDraft:     "草稿",
 		constants.EsignStatusPending:   "待签署",
 		constants.EsignStatusSigning:   "签署中",
@@ -178,38 +181,56 @@ func (s *ESignServiceImpl) GetEsignDetail(ctx context.Context, esignID int64, us
 		constants.EsignStatusRevoked:   "已撤销",
 	}
 
-	if status, ok := flow["status"].(int); ok {
-		flow["statusText"] = statusMap[status]
-	}
-
-	var signers []map[string]interface{}
-	database.GetDB().Table("esign_signer es").
-		Select("es.*, u.real_name, u.avatar, u.phone").
-		Joins("LEFT JOIN sys_user u ON es.user_id = u.id").
-		Where("es.flow_id = ?", esignID).
-		Order("es.sign_order ASC").
+	var signers []model.EsignSigner
+	database.GetDB().Where("flow_id = ?", esignID).
+		Order("sign_order ASC").
 		Find(&signers)
 
-	signStatusMap := map[int]string{
+	signStatusMap := map[int32]string{
 		constants.EsignSignerStatusPending:  "待签署",
 		constants.EsignSignerStatusSigned:   "已签署",
 		constants.EsignSignerStatusRejected: "已拒绝",
 	}
 
-	for _, signer := range signers {
-		if status, ok := signer["sign_status"].(int); ok {
-			signer["signStatusText"] = signStatusMap[status]
-		}
+	type signerVO struct {
+		model.EsignSigner
+		SignStatusName string `json:"signStatusText"`
 	}
 
-	flow["signers"] = signers
-	flow["signedCount"] = s.getSignedCount(esignID)
-	flow["totalSigners"] = len(signers)
+	var signerVOs []signerVO
+	for _, signer := range signers {
+		vo := signerVO{EsignSigner: signer}
+		vo.SignStatusName = signStatusMap[signer.SignStatus]
+		signerVOs = append(signerVOs, vo)
+	}
+
+	detail := map[string]interface{}{
+		"id":                flow.ID,
+		"flowNo":            flow.FlowNo,
+		"caseId":            flow.CaseID,
+		"caseNo":            flow.CaseNo,
+		"docTitle":          flow.DocTitle,
+		"docUrl":            flow.DocURL,
+		"signedDocumentUrl": flow.SignedDocumentURL,
+		"status":            flow.Status,
+		"statusText":        statusMap[flow.Status],
+		"signerCount":       flow.TotalSignCount,
+		"signedCount":       flow.SignedCount,
+		"fadadaFlowId":      flow.FaDaDaFlowID,
+		"crossPageSeal":     flow.CrossPageSeal,
+		"bcCertNo":          flow.BCCertNo,
+		"bcTxId":            flow.BCTxID,
+		"bcOnChainTime":     flow.BCOnChainTime,
+		"bcStatus":          flow.BCStatus,
+		"creatorId":         flow.CreatorID,
+		"creatorName":       flow.CreatorName,
+		"signers":           signerVOs,
+	}
 
 	var bcCert model.BlockchainCertificate
-	database.GetDB().Where("flow_id = ? AND deleted_at IS NULL", fmt.Sprintf("ES%d", esignID)).First(&bcCert)
+	database.GetDB().Where("flow_id = ? AND deleted_at IS NULL", flow.FlowNo).First(&bcCert)
 	if bcCert.ID > 0 {
-		flow["blockchainCert"] = map[string]interface{}{
+		detail["blockchainCert"] = map[string]interface{}{
 			"certNo":      bcCert.CertNo,
 			"txId":        bcCert.TxID,
 			"blockHeight": bcCert.BlockHeight,
@@ -221,7 +242,7 @@ func (s *ESignServiceImpl) GetEsignDetail(ctx context.Context, esignID int64, us
 		}
 	}
 
-	return flow, nil
+	return detail, nil
 }
 
 func (s *ESignServiceImpl) SignDocument(ctx context.Context, esignID int64, userID int64, verifyCode string, signatureData string) error {
@@ -241,18 +262,16 @@ func (s *ESignServiceImpl) SignDocument(ctx context.Context, esignID int64, user
 		return fmt.Errorf("您不是签署人")
 	}
 
-	if signer.Status == constants.EsignSignerStatusSigned {
+	if signer.SignStatus == constants.EsignSignerStatusSigned {
 		return fmt.Errorf("已签署")
 	}
 
 	now := time.Now()
-	updates := map[string]interface{}{
-		"sign_status":  constants.EsignSignerStatusSigned,
-		"sign_time":    now,
+	err := database.GetDB().Model(&signer).Updates(map[string]interface{}{
+		"sign_status":   constants.EsignSignerStatusSigned,
+		"sign_time":     now,
 		"signature_url": signatureData,
-	}
-
-	err := database.GetDB().Model(&signer).Updates(updates).Error
+	}).Error
 	if err != nil {
 		return err
 	}
@@ -263,15 +282,23 @@ func (s *ESignServiceImpl) SignDocument(ctx context.Context, esignID int64, user
 
 	signedCount := s.getSignedCount(esignID)
 	if signedCount >= flow.TotalSignCount {
-		database.GetDB().Model(&flow).Update("status", constants.EsignStatusCompleted)
-		s.sendEsignNotifications(flow.ID, flow.CaseID, nil, flow.DocumentName, "complete")
+		database.GetDB().Model(&flow).Updates(map[string]interface{}{
+			"status":         constants.EsignStatusCompleted,
+			"last_sign_time": now,
+		})
+		s.sendEsignNotifications(flow.ID, flow.CaseID, nil, flow.DocTitle, "complete")
 
 		if flow.FaDaDaFlowID != "" {
 			go s.autoStoreToBlockchain(flow)
 		}
 	}
 
-	mq.SendAsync(constants.MQTopicEsignNotify, map[string]interface{}{
+	callback := func(ctx context.Context, result *primitive.SendResult, err error) {
+		if err != nil {
+			logger.Error("Send esign sign notify failed", logger.Error(err))
+		}
+	}
+	mq.SendAsyncMessage(constants.MQTopicEsignNotify, map[string]interface{}{
 		"type":        "esign_sign",
 		"flowId":      esignID,
 		"userId":      userID,
@@ -280,7 +307,7 @@ func (s *ESignServiceImpl) SignDocument(ctx context.Context, esignID int64, user
 		"totalCount":  flow.TotalSignCount,
 		"allSigned":   signedCount >= flow.TotalSignCount,
 		"timestamp":   now,
-	})
+	}, callback)
 
 	return nil
 }
@@ -299,14 +326,13 @@ func (s *ESignServiceImpl) RevokeEsignFlow(ctx context.Context, esignID int64, u
 		}
 	}
 
-	updates := map[string]interface{}{
-		"status":       constants.EsignStatusRevoked,
+	now := time.Now()
+	return database.GetDB().Model(&flow).Updates(map[string]interface{}{
+		"status":        constants.EsignStatusRevoked,
 		"revoke_reason": reason,
-		"revoke_time":  time.Now(),
-		"revoked_by":   userID,
-	}
-
-	return database.GetDB().Model(&flow).Updates(updates).Error
+		"revoke_time":   now,
+		"revoke_by":     userID,
+	}).Error
 }
 
 func (s *ESignServiceImpl) SendEsignVerifyCode(ctx context.Context, esignID int64, mobile string) error {
@@ -321,14 +347,19 @@ func (s *ESignServiceImpl) SendEsignVerifyCode(ctx context.Context, esignID int6
 	key := fmt.Sprintf("esign:verify:%d:%d", user.ID, esignID)
 	database.GetRedisClient().Set(ctx, key, code, time.Duration(esignVerifyCodeTTL)*time.Second)
 
-	mq.SendAsync(constants.MQTopicEsignNotify, map[string]interface{}{
+	callback := func(ctx context.Context, result *primitive.SendResult, err error) {
+		if err != nil {
+			logger.Error("Send esign verify code notify failed", logger.Error(err))
+		}
+	}
+	mq.SendAsyncMessage(constants.MQTopicEsignNotify, map[string]interface{}{
 		"type":      "sms_verify",
 		"mobile":    mobile,
 		"code":      code,
 		"esignId":   esignID,
 		"expire":    esignVerifyCodeTTL,
 		"timestamp": time.Now(),
-	})
+	}, callback)
 
 	return nil
 }
@@ -340,9 +371,8 @@ func (s *ESignServiceImpl) GetEsignProgress(ctx context.Context, flowID string) 
 		return nil, fmt.Errorf("签署流程不存在")
 	}
 
-	var signers []map[string]interface{}
-	database.GetDB().Table("esign_signer").
-		Where("flow_id = ?", flow.ID).
+	var signers []model.EsignSigner
+	database.GetDB().Where("flow_id = ?", flow.ID).
 		Order("sign_order ASC").
 		Find(&signers)
 
@@ -383,19 +413,29 @@ func (s *ESignServiceImpl) StoreSignedDocToBlockchain(ctx context.Context, esign
 		return nil, fmt.Errorf("区块链客户端未初始化")
 	}
 
+	pdfHash := ""
+	if flow.SignedDocumentURL != "" {
+		_, hash, err := downloadPDFAndComputeHash(flow.SignedDocumentURL)
+		if err != nil {
+			logger.Error("Download PDF and compute hash failed", logger.Error(err))
+		} else {
+			pdfHash = hash
+		}
+	}
+
 	metadata, _ := json.Marshal(map[string]interface{}{
 		"caseId":  flow.CaseID,
 		"caseNo":  flow.CaseNo,
 		"flowNo":  flow.FlowNo,
-		"docName": flow.DocumentName,
+		"docName": flow.DocTitle,
 	})
 
 	storeResult, err := bcClient.StoreEvidence(&blockchain.StoreEvidenceReq{
 		EvidenceID:   flow.FlowNo,
 		EvidenceType: constants.BCTypeEsignDocument,
-		EvidenceHash: "",
-		EvidenceName: flow.DocumentName,
-		Description:  fmt.Sprintf("调解协议书电子签章文档上链: %s", flow.DocumentName),
+		EvidenceHash: pdfHash,
+		EvidenceName: flow.DocTitle,
+		Description:  fmt.Sprintf("调解协议书电子签章文档上链: %s", flow.DocTitle),
 		Metadata:     string(metadata),
 	})
 	if err != nil {
@@ -420,13 +460,18 @@ func (s *ESignServiceImpl) StoreSignedDocToBlockchain(ctx context.Context, esign
 }
 
 func (s *ESignServiceImpl) NotifySignerProgress(ctx context.Context, flowID string, signerID int64, notifyType string) error {
-	mq.SendAsync(constants.MQTopicEsignNotify, map[string]interface{}{
+	callback := func(ctx context.Context, result *primitive.SendResult, err error) {
+		if err != nil {
+			logger.Error("Send esign progress notify failed", logger.Error(err))
+		}
+	}
+	mq.SendAsyncMessage(constants.MQTopicEsignNotify, map[string]interface{}{
 		"type":       "esign_progress",
 		"flowId":     flowID,
 		"signerId":   signerID,
 		"notifyType": notifyType,
 		"timestamp":  time.Now(),
-	})
+	}, callback)
 
 	now := time.Now()
 	notifyStatus := constants.EsignNotifyStatusSMS
@@ -436,10 +481,10 @@ func (s *ESignServiceImpl) NotifySignerProgress(ctx context.Context, flowID stri
 		notifyStatus = constants.EsignNotifyStatusAll
 	}
 
-	database.GetDB().Table("esign_signer").
+	database.GetDB().Model(&model.EsignSigner{}).
 		Where("flow_id = (SELECT id FROM esign_flow WHERE flow_no = ?) AND user_id = ?", flowID, signerID).
 		Updates(map[string]interface{}{
-			"notify_status": notifyStatus,
+			"notify_status":  notifyStatus,
 			"notify_sent_at": now,
 		})
 
@@ -452,6 +497,17 @@ func (s *ESignServiceImpl) autoStoreToBlockchain(flow model.EsignFlow) {
 		return
 	}
 
+	pdfHash := ""
+	if flow.SignedDocumentURL != "" {
+		_, hash, err := downloadPDFAndComputeHash(flow.SignedDocumentURL)
+		if err != nil {
+			logger.Error("Auto store: download PDF and compute hash failed", logger.Error(err))
+		} else {
+			pdfHash = hash
+			logger.Info("Auto store: PDF hash computed", logger.String("pdfHash", pdfHash))
+		}
+	}
+
 	metadata, _ := json.Marshal(map[string]interface{}{
 		"caseId": flow.CaseID,
 		"caseNo": flow.CaseNo,
@@ -461,9 +517,9 @@ func (s *ESignServiceImpl) autoStoreToBlockchain(flow model.EsignFlow) {
 	storeResult, err := bcClient.StoreEvidence(&blockchain.StoreEvidenceReq{
 		EvidenceID:   flow.FlowNo,
 		EvidenceType: constants.BCTypeEsignDocument,
-		EvidenceHash: "",
-		EvidenceName: flow.DocumentName,
-		Description:  fmt.Sprintf("调解协议书签章完成自动上链: %s", flow.DocumentName),
+		EvidenceHash: pdfHash,
+		EvidenceName: flow.DocTitle,
+		Description:  fmt.Sprintf("调解协议书签章完成自动上链: %s", flow.DocTitle),
 		Metadata:     string(metadata),
 	})
 	if err != nil {
@@ -495,7 +551,8 @@ func (s *ESignServiceImpl) autoStoreToBlockchain(flow model.EsignFlow) {
 		CertNo:       storeResult.CertNo,
 		EvidenceID:   flow.FlowNo,
 		EvidenceType: constants.BCTypeEsignDocument,
-		EvidenceName: flow.DocumentName,
+		EvidenceName: flow.DocTitle,
+		EvidenceHash: pdfHash,
 		CaseID:       flow.CaseID,
 		FlowID:       flow.FlowNo,
 		TxID:         storeResult.TxID,
@@ -506,17 +563,48 @@ func (s *ESignServiceImpl) autoStoreToBlockchain(flow model.EsignFlow) {
 		VerifyURL:    verifyURL,
 		Status:       constants.BCStatusOnChain,
 		Metadata:     string(metadata),
-		CreatedBy:    flow.CreatedBy,
+		CreatedBy:    flow.CreatorID,
 	}
 	database.GetDB().Create(cert)
 }
 
+func downloadPDFAndComputeHash(docURL string) ([]byte, string, error) {
+	client := &http.Client{Timeout: 60 * time.Second}
+	resp, err := client.Get(docURL)
+	if err != nil {
+		return nil, "", fmt.Errorf("下载PDF失败: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, "", fmt.Errorf("下载PDF失败, HTTP状态码: %d", resp.StatusCode)
+	}
+
+	pdfData, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, "", fmt.Errorf("读取PDF数据失败: %v", err)
+	}
+
+	hash := sha256.Sum256(pdfData)
+	pdfHash := hex.EncodeToString(hash[:])
+
+	return pdfData, pdfHash, nil
+}
+
 func (s *ESignServiceImpl) createSignerRecords(flowID int64, signerIDs []int64) {
 	for _, signerID := range signerIDs {
+		var user struct {
+			RealName string `gorm:"column:real_name"`
+			Phone    string `gorm:"column:phone"`
+		}
+		database.GetDB().Table("sys_user").Select("real_name, phone").Where("id = ?", signerID).First(&user)
+
 		signer := &model.EsignSigner{
-			FlowID: flowID,
-			UserID: signerID,
-			Status: constants.EsignSignerStatusPending,
+			FlowID:     flowID,
+			UserID:     signerID,
+			UserName:   user.RealName,
+			UserPhone:  user.Phone,
+			SignStatus: constants.EsignSignerStatusPending,
 		}
 		database.GetDB().Create(signer)
 	}
@@ -524,20 +612,25 @@ func (s *ESignServiceImpl) createSignerRecords(flowID int64, signerIDs []int64) 
 
 func (s *ESignServiceImpl) sendEsignNotifications(flowID, caseID int64, signerIDs []int64, title, action string) {
 	for _, sid := range signerIDs {
-		mq.SendAsync(constants.MQTopicEsignNotify, map[string]interface{}{
+		callback := func(ctx context.Context, result *primitive.SendResult, err error) {
+			if err != nil {
+				logger.Error("Send esign notification failed", logger.Error(err))
+			}
+		}
+		mq.SendAsyncMessage(constants.MQTopicEsignNotify, map[string]interface{}{
 			"type":      "esign_" + action,
 			"flowId":    flowID,
 			"userId":    sid,
 			"caseId":    caseID,
 			"title":     title,
 			"timestamp": time.Now(),
-		})
+		}, callback)
 	}
 }
 
 func (s *ESignServiceImpl) getSignedCount(flowID int64) int {
 	var count int64
-	database.GetDB().Table("esign_signer").
+	database.GetDB().Model(&model.EsignSigner{}).
 		Where("flow_id = ? AND sign_status = ?", flowID, constants.EsignSignerStatusSigned).
 		Count(&count)
 	return int(count)

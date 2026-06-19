@@ -123,6 +123,42 @@ type JudicialSealMessage struct {
 	OperatorName string `json:"operatorName"`
 }
 
+type EsignNotifyMessage struct {
+	Type        string `json:"type"`
+	CaseID      int64  `json:"caseId"`
+	CaseNo      string `json:"caseNo"`
+	CaseTitle   string `json:"caseTitle"`
+	FlowID      string `json:"flowId"`
+	DocTitle    string `json:"docTitle"`
+	Signer      string `json:"signer"`
+	Phone       string `json:"phone"`
+	UserID      int64  `json:"userId"`
+	VerifyCode  string `json:"verifyCode"`
+	ExpireHours int32  `json:"expireHours"`
+	NotifyType  string `json:"notifyType"`
+	SignedCount int    `json:"signedCount"`
+	TotalCount  int    `json:"totalCount"`
+	AllSigned   bool   `json:"allSigned"`
+	SignTime    string `json:"signTime"`
+	FaDaDaFlowID string `json:"fadadaFlowId"`
+	RevokeReason string `json:"revokeReason"`
+	RevokeBy    string `json:"revokeBy"`
+	CertNo      string `json:"certNo"`
+	TxID        string `json:"txId"`
+	BlockHeight int64  `json:"blockHeight"`
+}
+
+type BlockchainStoreMessage struct {
+	Type         string `json:"type"`
+	CaseID       int64  `json:"caseId"`
+	CaseNo       string `json:"caseNo"`
+	EvidenceID   string `json:"evidenceId"`
+	EvidenceName string `json:"evidenceName"`
+	CertNo       string `json:"certNo"`
+	TxID         string `json:"txId"`
+	BlockHeight  int64  `json:"blockHeight"`
+}
+
 type JudicialRemindMessage struct {
 	ConfirmID    int64    `json:"confirmId"`
 	ConfirmNo    string   `json:"confirmNo"`
@@ -150,6 +186,8 @@ func StartConsumers() {
 		go startJudicialStatusConsumer(cfg)
 		go startJudicialSyncConsumer(cfg)
 		go startJudicialRemindConsumer(cfg)
+		go startEsignNotifyConsumer(cfg)
+		go startBlockchainStoreConsumer(cfg)
 
 		go monitorShutdownSignal()
 
@@ -1399,4 +1437,324 @@ func SendJudicialRemindMessage(msg *JudicialRemindMessage) error {
 	}
 	body, _ := json.Marshal(msg)
 	return SendAsyncMessage(constants.MQTopicJudicialRemind, body, callback)
+}
+
+func startEsignNotifyConsumer(cfg *config.Config) {
+	consumerWg.Add(1)
+	defer consumerWg.Done()
+
+	groupName := cfg.RocketMQ.GroupName + "_esign_notify"
+	cons := InitConsumer(cfg, groupName)
+	consumers = append(consumers, cons)
+
+	topic := constants.MQTopicEsignNotify
+
+	err := cons.Subscribe(topic, consumer.MessageSelector{
+		Type:       consumer.TAG,
+		Expression: "*",
+	}, func(ctx context.Context, msgs ...*primitive.MessageExt) (consumer.ConsumeResult, error) {
+		for _, msg := range msgs {
+			select {
+			case <-shutdownSignal:
+				return consumer.ConsumeRetryLater, nil
+			default:
+			}
+
+			var esignMsg EsignNotifyMessage
+			if err := json.Unmarshal(msg.Body, &esignMsg); err != nil {
+				logger.Error("Unmarshal esign notify message failed",
+					logger.Error(err),
+					zap.String("msgId", msg.MsgId),
+				)
+				continue
+			}
+
+			logger.Info("Received esign notify message",
+				zap.String("type", esignMsg.Type),
+				zap.Int64("caseId", esignMsg.CaseID),
+				zap.String("caseNo", esignMsg.CaseNo),
+			)
+
+			processEsignNotifyNotification(&esignMsg)
+		}
+		return consumer.ConsumeSuccess, nil
+	})
+
+	if err != nil {
+		logger.Error("Subscribe esign notify topic failed", logger.Error(err))
+		return
+	}
+
+	if err := cons.Start(); err != nil {
+		logger.Error("Start esign notify consumer failed", logger.Error(err))
+		return
+	}
+
+	logger.Info("Esign notify consumer started", zap.String("topic", topic), zap.String("group", groupName))
+
+	for {
+		select {
+		case <-shutdownSignal:
+			logger.Info("Esign notify consumer stopping")
+			return
+		case <-time.After(1 * time.Second):
+		}
+	}
+}
+
+func processEsignNotifyNotification(msg *EsignNotifyMessage) {
+	db := database.GetDB()
+	if db == nil {
+		logger.Error("Database not initialized")
+		return
+	}
+
+	var title, content string
+	var templateID int64
+	var templateName string
+
+	switch msg.Type {
+	case "esign_sign_progress":
+		title = fmt.Sprintf("【签章进度】%s签署进度更新", msg.DocTitle)
+		if msg.AllSigned {
+			content = fmt.Sprintf(
+				"尊敬的%s您好：文件《%s》（案件编号：%s）所有签署人已完成签署，签署进度：%d/%d，签署时间：%s。",
+				msg.Signer, msg.DocTitle, msg.CaseNo, msg.SignedCount, msg.TotalCount, msg.SignTime,
+			)
+		} else {
+			content = fmt.Sprintf(
+				"尊敬的%s您好：文件《%s》（案件编号：%s）签署进度更新：%d/%d，最新签署人：%s，签署时间：%s。",
+				msg.Signer, msg.DocTitle, msg.CaseNo, msg.SignedCount, msg.TotalCount, msg.Signer, msg.SignTime,
+			)
+		}
+		templateID = 7
+		templateName = "签章进度通知"
+	case "esign_blockchain_stored":
+		title = fmt.Sprintf("【存证完成】%s已上链存证", msg.DocTitle)
+		content = fmt.Sprintf(
+			"文件《%s》（案件编号：%s）已完成区块链存证。证书编号：%s，交易ID：%s，区块高度：%d。请妥善保管证书编号，可通过扫码核验真伪。",
+			msg.DocTitle, msg.CaseNo, msg.CertNo, msg.TxID, msg.BlockHeight,
+		)
+		templateID = 8
+		templateName = "区块链存证通知"
+	case "esign_fadada_callback":
+		title = fmt.Sprintf("【签章回调】%s签署状态更新", msg.DocTitle)
+		content = fmt.Sprintf(
+			"文件《%s》（案件编号：%s）法大大回调通知，签署进度：%d/%d，是否全部签署：%v。",
+			msg.DocTitle, msg.CaseNo, msg.SignedCount, msg.TotalCount, msg.AllSigned,
+		)
+		templateID = 7
+		templateName = "签章进度通知"
+	default:
+		if msg.VerifyCode != "" {
+			title = fmt.Sprintf("【签署验证】您的签署验证码")
+			content = fmt.Sprintf(
+				"尊敬的%s您好：您有待签署的文件《%s》（案件编号：%s），验证码：%s，有效期%d小时。请勿泄露验证码。",
+				msg.Signer, msg.DocTitle, msg.CaseNo, msg.VerifyCode, msg.ExpireHours,
+			)
+			templateID = 9
+			templateName = "签署验证码通知"
+		} else if msg.RevokeReason != "" {
+			title = fmt.Sprintf("【签署撤销】%s签署流程已撤销", msg.DocTitle)
+			content = fmt.Sprintf(
+				"尊敬的%s您好：文件《%s》（案件编号：%s）的签署流程已被%s撤销，原因：%s。",
+				msg.Signer, msg.DocTitle, msg.CaseNo, msg.RevokeBy, msg.RevokeReason,
+			)
+			templateID = 10
+			templateName = "签署撤销通知"
+		} else {
+			title = fmt.Sprintf("【签章通知】您有新的签署任务")
+			content = fmt.Sprintf(
+				"尊敬的%s您好：您有待签署的文件《%s》（案件编号：%s），请及时完成签署。",
+				msg.Signer, msg.DocTitle, msg.CaseNo,
+			)
+			templateID = 7
+			templateName = "签章通知"
+		}
+	}
+
+	params := map[string]interface{}{
+		"type":       msg.Type,
+		"caseId":     msg.CaseID,
+		"caseNo":     msg.CaseNo,
+		"docTitle":   msg.DocTitle,
+		"signer":     msg.Signer,
+		"notifyType": msg.NotifyType,
+	}
+	paramsJSON, _ := json.Marshal(params)
+
+	notifyType := msg.NotifyType
+	if notifyType == "" {
+		notifyType = "sms"
+	}
+
+	var channels []string
+	switch notifyType {
+	case "wechat":
+		channels = []string{"微信"}
+	case "all":
+		channels = []string{"短信", "微信"}
+	default:
+		channels = []string{"短信"}
+	}
+
+	for _, ch := range channels {
+		insertSQL := `INSERT INTO notification_record (receiver_id, receiver_name, template_id, template_name, template_type, title, content, channel_type, send_status, params, case_id, case_no, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+		if err := db.Exec(insertSQL,
+			msg.UserID,
+			msg.Signer,
+			templateID,
+			templateName,
+			7,
+			title,
+			content,
+			ch,
+			1,
+			string(paramsJSON),
+			msg.CaseID,
+			msg.CaseNo,
+			time.Now(),
+		).Error; err != nil {
+			logger.Error("Insert esign notify notification record failed",
+				logger.Error(err),
+				zap.Int64("caseId", msg.CaseID),
+				zap.String("channel", ch),
+			)
+		}
+	}
+
+	logger.Info("Esign notify notifications sent",
+		zap.String("type", msg.Type),
+		zap.Int64("caseId", msg.CaseID),
+		zap.String("notifyType", notifyType),
+	)
+}
+
+func startBlockchainStoreConsumer(cfg *config.Config) {
+	consumerWg.Add(1)
+	defer consumerWg.Done()
+
+	groupName := cfg.RocketMQ.GroupName + "_blockchain_store"
+	cons := InitConsumer(cfg, groupName)
+	consumers = append(consumers, cons)
+
+	topic := constants.MQTopicBlockchainStore
+
+	err := cons.Subscribe(topic, consumer.MessageSelector{
+		Type:       consumer.TAG,
+		Expression: "*",
+	}, func(ctx context.Context, msgs ...*primitive.MessageExt) (consumer.ConsumeResult, error) {
+		for _, msg := range msgs {
+			select {
+			case <-shutdownSignal:
+				return consumer.ConsumeRetryLater, nil
+			default:
+			}
+
+			var bcMsg BlockchainStoreMessage
+			if err := json.Unmarshal(msg.Body, &bcMsg); err != nil {
+				logger.Error("Unmarshal blockchain store message failed",
+					logger.Error(err),
+					zap.String("msgId", msg.MsgId),
+				)
+				continue
+			}
+
+			logger.Info("Received blockchain store message",
+				zap.String("type", bcMsg.Type),
+				zap.Int64("caseId", bcMsg.CaseID),
+				zap.String("certNo", bcMsg.CertNo),
+			)
+
+			processBlockchainStoreNotification(&bcMsg)
+		}
+		return consumer.ConsumeSuccess, nil
+	})
+
+	if err != nil {
+		logger.Error("Subscribe blockchain store topic failed", logger.Error(err))
+		return
+	}
+
+	if err := cons.Start(); err != nil {
+		logger.Error("Start blockchain store consumer failed", logger.Error(err))
+		return
+	}
+
+	logger.Info("Blockchain store consumer started", zap.String("topic", topic), zap.String("group", groupName))
+
+	for {
+		select {
+		case <-shutdownSignal:
+			logger.Info("Blockchain store consumer stopping")
+			return
+		case <-time.After(1 * time.Second):
+		}
+	}
+}
+
+func processBlockchainStoreNotification(msg *BlockchainStoreMessage) {
+	db := database.GetDB()
+	if db == nil {
+		logger.Error("Database not initialized")
+		return
+	}
+
+	title := fmt.Sprintf("【存证完成】%s已上链存证", msg.EvidenceName)
+	content := fmt.Sprintf(
+		"证据材料《%s》（案件编号：%s）已完成区块链司法存证。证书编号：%s，交易ID：%s，区块高度：%d。您可通过证书编号扫码核验真伪。",
+		msg.EvidenceName, msg.CaseNo, msg.CertNo, msg.TxID, msg.BlockHeight,
+	)
+
+	params := map[string]interface{}{
+		"type":         msg.Type,
+		"caseId":       msg.CaseID,
+		"caseNo":       msg.CaseNo,
+		"evidenceId":   msg.EvidenceID,
+		"certNo":       msg.CertNo,
+		"txId":         msg.TxID,
+		"blockHeight":  msg.BlockHeight,
+		"evidenceName": msg.EvidenceName,
+	}
+	paramsJSON, _ := json.Marshal(params)
+
+	var caseInfo struct {
+		MediatorID   int64  `gorm:"column:mediator_id"`
+		MediatorName string `gorm:"column:mediator_name"`
+	}
+	db.Table("dispute_case").Select("mediator_id, mediator_name").
+		Where("id = ?", msg.CaseID).Scan(&caseInfo)
+
+	if caseInfo.MediatorID > 0 {
+		channels := []string{"站内信", "短信", "微信"}
+		for _, ch := range channels {
+			insertSQL := `INSERT INTO notification_record (receiver_id, receiver_name, template_id, template_name, template_type, title, content, channel_type, send_status, params, case_id, case_no, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+			if err := db.Exec(insertSQL,
+				caseInfo.MediatorID,
+				caseInfo.MediatorName,
+				8,
+				"区块链存证通知",
+				8,
+				title,
+				content,
+				ch,
+				1,
+				string(paramsJSON),
+				msg.CaseID,
+				msg.CaseNo,
+				time.Now(),
+			).Error; err != nil {
+				logger.Error("Insert blockchain store notification record failed",
+					logger.Error(err),
+					zap.Int64("caseId", msg.CaseID),
+					zap.String("channel", ch),
+				)
+			}
+		}
+	}
+
+	logger.Info("Blockchain store notifications sent",
+		zap.Int64("caseId", msg.CaseID),
+		zap.String("certNo", msg.CertNo),
+	)
 }

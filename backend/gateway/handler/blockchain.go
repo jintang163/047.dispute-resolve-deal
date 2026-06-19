@@ -17,6 +17,7 @@ import (
 	"github.com/dispute-resolve/common/utils"
 	"github.com/dispute-resolve/gateway/middleware"
 
+	"github.com/apache/rocketmq-client-go/v2/primitive"
 	"github.com/cloudwego/hertz/pkg/app"
 )
 
@@ -108,8 +109,8 @@ func StoreEvidenceToBlockchain(ctx context.Context, c *app.RequestContext) {
 	}
 
 	if req.FlowID != "" {
-		database.GetDB().Table("esign_record").
-			Where("flow_id = ?", req.FlowID).
+		database.GetDB().Model(&model.EsignFlow{}).
+			Where("flow_no = ?", req.FlowID).
 			Updates(map[string]interface{}{
 				"bc_cert_no":      certNo,
 				"bc_tx_id":        storeResult.TxID,
@@ -134,7 +135,7 @@ func StoreEvidenceToBlockchain(ctx context.Context, c *app.RequestContext) {
 	}
 	database.GetDB().Table("dispute_case_history").Create(history)
 
-	mq.SendAsync(constants.MQTopicBlockchainStore, map[string]interface{}{
+	mq.SendAsyncMessage(constants.MQTopicBlockchainStore, map[string]interface{}{
 		"type":        "blockchain_stored",
 		"caseId":      req.CaseID,
 		"caseNo":      caseNo,
@@ -143,6 +144,10 @@ func StoreEvidenceToBlockchain(ctx context.Context, c *app.RequestContext) {
 		"txId":        storeResult.TxID,
 		"blockHeight": storeResult.BlockHeight,
 		"evidenceName": req.EvidenceName,
+	}, func(ctx context.Context, result *primitive.SendResult, err error) {
+		if err != nil {
+			logger.Error("Send blockchain store notify failed", logger.Error(err))
+		}
 	})
 
 	c.JSON(http.StatusOK, response.SuccessWithMessage(map[string]interface{}{

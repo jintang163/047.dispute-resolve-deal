@@ -7,9 +7,11 @@ type EsignFlow struct {
 	FlowNo            string     `gorm:"size:50;uniqueIndex;not null" json:"flowNo"`
 	CaseID            int64      `gorm:"index;not null" json:"caseId"`
 	CaseNo            string     `gorm:"size:50" json:"caseNo"`
+	DocType           int32      `gorm:"default:0" json:"docType"`
+	DocTitle          string     `gorm:"size:200;not null" json:"docTitle"`
+	DocContent        string     `gorm:"type:text" json:"docContent"`
+	DocURL            string     `gorm:"size:500" json:"docUrl"`
 	TemplateID        int64      `json:"templateId"`
-	DocumentName      string     `gorm:"size:200;not null" json:"documentName"`
-	DocumentURL       string     `gorm:"size:500;not null" json:"documentUrl"`
 	SignedDocumentURL string     `gorm:"size:500" json:"signedDocumentUrl"`
 	Status            int32      `gorm:"default:0;index" json:"status"`
 	CurrentSignIndex  int        `gorm:"default:0" json:"currentSignIndex"`
@@ -22,7 +24,13 @@ type EsignFlow struct {
 	BCTxID            string     `gorm:"size:100" json:"bcTxId"`
 	BCOnChainTime     *time.Time `json:"bcOnChainTime"`
 	BCStatus          int32      `gorm:"default:0" json:"bcStatus"`
-	CreatedBy         int64      `json:"createdBy"`
+	CreatorID         int64      `gorm:"index" json:"creatorId"`
+	CreatorName       string     `gorm:"size:50" json:"creatorName"`
+	OrganizationID    int64      `gorm:"index" json:"organizationId"`
+	RevokeReason      string     `gorm:"size:500" json:"revokeReason"`
+	RevokeTime        *time.Time `json:"revokeTime"`
+	RevokeBy          int64      `json:"revokeBy"`
+	LastSignTime      *time.Time `json:"lastSignTime"`
 }
 
 func (EsignFlow) TableName() string {
