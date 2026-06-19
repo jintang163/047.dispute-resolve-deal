@@ -1,9 +1,10 @@
 import React, { useRef, useState } from 'react';
-import { Button, Tag, Space, App } from 'antd';
+import { Button, Tag, Space, App, Drawer } from 'antd';
 import {
   EyeOutlined,
   FileTextOutlined,
   PlusOutlined,
+  RobotOutlined,
 } from '@ant-design/icons';
 import {
   ProTable,
@@ -14,6 +15,7 @@ import {
 import type { ActionType, ProColumns } from '@ant-design/pro-components';
 import { useNavigate } from 'react-router-dom';
 import { mediationService, MediationRecord } from '../../services/user';
+import ProtocolGenerator from '../Mediation/ProtocolGenerator';
 import dayjs from 'dayjs';
 
 const resultColorMap: Record<string, string> = {
@@ -35,6 +37,8 @@ const MediationList: React.FC = () => {
   const { message } = App.useApp();
   const actionRef = useRef<ActionType>();
   const [selectedRowKeys, setSelectedRowKeys] = useState<React.Key[]>([]);
+  const [protocolDrawerOpen, setProtocolDrawerOpen] = useState(false);
+  const [protocolCaseId, setProtocolCaseId] = useState<string>('');
 
   const columns: ProColumns<MediationRecord>[] = [
     {
@@ -122,6 +126,17 @@ const MediationList: React.FC = () => {
         </Button>,
         <Button
           type="link"
+          key="ai-protocol"
+          icon={<RobotOutlined />}
+          onClick={() => {
+            setProtocolCaseId(String(record.caseId));
+            setProtocolDrawerOpen(true);
+          }}
+        >
+          AI协议
+        </Button>,
+        <Button
+          type="link"
           key="protocol"
           icon={<FileTextOutlined />}
           onClick={() => {
@@ -201,6 +216,26 @@ const MediationList: React.FC = () => {
       }}
       scroll={{ x: 1300 }}
     />
+
+      <Drawer
+        title={
+          <Space>
+            <RobotOutlined style={{ color: '#533483' }} />
+            <span>AI智能生成调解协议</span>
+          </Space>
+        }
+        width={1400}
+        open={protocolDrawerOpen}
+        onClose={() => setProtocolDrawerOpen(false)}
+        destroyOnClose
+      >
+        {protocolCaseId && (
+          <ProtocolGenerator
+            caseId={protocolCaseId}
+            onClose={() => setProtocolDrawerOpen(false)}
+          />
+        )}
+      </Drawer>
   );
 };
 

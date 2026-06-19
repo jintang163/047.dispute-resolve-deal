@@ -11,6 +11,7 @@ import {
   Spin,
   Divider,
   App,
+  Drawer,
 } from 'antd';
 import {
   ArrowLeftOutlined,
@@ -19,10 +20,13 @@ import {
   ClockCircleOutlined,
   CloseCircleOutlined,
   SafetyCertificateOutlined,
+  RobotOutlined,
+  FileTextOutlined,
 } from '@ant-design/icons';
 import { useNavigate, useParams } from 'react-router-dom';
 import { ProDescriptions } from '@ant-design/pro-components';
 import { disputeService, DisputeDetail } from '../../services/dispute';
+import ProtocolGenerator from '../Mediation/ProtocolGenerator';
 import dayjs from 'dayjs';
 
 const statusColorMap: Record<string, string> = {
@@ -93,6 +97,7 @@ const DisputeDetail: React.FC = () => {
   const { message } = App.useApp();
   const [loading, setLoading] = useState(false);
   const [detail, setDetail] = useState<DisputeDetail | null>(null);
+  const [protocolDrawerOpen, setProtocolDrawerOpen] = useState(false);
 
   useEffect(() => {
     if (id) {
@@ -125,6 +130,12 @@ const DisputeDetail: React.FC = () => {
                 返回
               </Button>
               <Button icon={<EditOutlined />}>编辑</Button>
+              <Button
+                icon={<RobotOutlined />}
+                onClick={() => setProtocolDrawerOpen(true)}
+              >
+                AI生成协议
+              </Button>
               <Button type="primary">分配调解员</Button>
             </Space>
           }
@@ -244,6 +255,21 @@ const DisputeDetail: React.FC = () => {
           </Col>
         </Row>
       </Space>
+
+      <Drawer
+        title={
+          <Space>
+            <RobotOutlined style={{ color: '#533483' }} />
+            <span>AI智能生成调解协议</span>
+          </Space>
+        }
+        width={1400}
+        open={protocolDrawerOpen}
+        onClose={() => setProtocolDrawerOpen(false)}
+        destroyOnClose
+      >
+        {id && <ProtocolGenerator caseId={id} onClose={() => setProtocolDrawerOpen(false)} />}
+      </Drawer>
     </Spin>
   );
 };

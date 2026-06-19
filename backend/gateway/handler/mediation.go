@@ -6,11 +6,14 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
+	"github.com/dispute-resolve/common/ai"
 	"github.com/dispute-resolve/common/cache"
 	"github.com/dispute-resolve/common/constants"
 	"github.com/dispute-resolve/common/database"
+	"github.com/dispute-resolve/common/logger"
 	"github.com/dispute-resolve/common/mq"
 	"github.com/dispute-resolve/common/response"
 	"github.com/dispute-resolve/common/utils"
@@ -342,4 +345,267 @@ func GetDisputeTypes(ctx context.Context, c *app.RequestContext) {
 	cache.Set(ctx, cacheKey, string(jsonData), time.Hour*24)
 
 	c.JSON(http.StatusOK, response.Success(root))
+}
+
+type GenerateMediationProtocolRequest struct {
+	CaseID           int64    `json:"caseId" binding:"required"`
+	CaseNo           string   `json:"caseNo"`
+	CaseTitle        string   `json:"caseTitle"`
+	DisputeType      string   `json:"disputeType"`
+	PartyAName       string   `json:"partyAName" binding:"required"`
+	PartyAGender     string   `json:"partyAGender"`
+	PartyAIDCard     string   `json:"partyAIDCard"`
+	PartyAAddress    string   `json:"partyAAddress"`
+	PartyAPhone      string   `json:"partyAPhone"`
+	PartyBName       string   `json:"partyBName" binding:"required"`
+	PartyBGender     string   `json:"partyBGender"`
+	PartyBIDCard     string   `json:"partyBIDCard"`
+	PartyBAddress    string   `json:"partyBAddress"`
+	PartyBPhone      string   `json:"partyBPhone"`
+	DisputeSummary   string   `json:"disputeSummary" binding:"required"`
+	LiabilityParty   string   `json:"liabilityParty"`
+	LiabilityRatioA  int      `json:"liabilityRatioA"`
+	LiabilityRatioB  int      `json:"liabilityRatioB"`
+	LiabilityReason  string   `json:"liabilityReason"`
+	CompensationAmount float64 `json:"compensationAmount" binding:"required"`
+	CompensationType string   `json:"compensationType"`
+	PaymentMethod    string   `json:"paymentMethod"`
+	PerformanceDate  string   `json:"performanceDate" binding:"required"`
+	PaymentAccount   string   `json:"paymentAccount"`
+	OtherTerms       []string `json:"otherTerms"`
+	BreachClause     string   `json:"breachClause"`
+	SignPlace        string   `json:"signPlace"`
+	SignDate         string   `json:"signDate"`
+	RegionPrefix     string   `json:"regionPrefix"`
+	ProtocolYear     int      `json:"protocolYear"`
+	ProtocolSeq      int      `json:"protocolSeq"`
+}
+
+func GenerateMediationProtocol(ctx context.Context, c *app.RequestContext) {
+	caseID, _ := strconv.ParseInt(c.Param("id"), 10, 64)
+	userInfo := middleware.GetUserInfo(c)
+
+	var req GenerateMediationProtocolRequest
+	if err := c.BindAndValidate(&req); err != nil {
+		c.JSON(http.StatusBadRequest, response.BadRequest(err.Error()))
+		return
+	}
+
+	var caseData struct {
+		CaseNo       string `gorm:"column:case_no"`
+		Title        string `gorm:"column:title"`
+		TypeName     string `gorm:"column:type_name"`
+		Status       int32  `gorm:"column:status"`
+		MediatorID   int64  `gorm:"column:mediator_id"`
+		MediatorName string `gorm:"column:mediator_name"`
+	}
+	database.GetDB().Table("dispute_case").
+		Where("id = ?", caseID).
+		First(&caseData)
+
+	if caseData.MediatorID != userInfo.UserID && userInfo.Role > constants.RoleLeader {
+		c.JSON(http.StatusForbidden, response.Forbidden("只有案件调解员或领导可以生成调解协议"))
+		return
+	}
+
+	if req.CaseNo == "" {
+		req.CaseNo = caseData.CaseNo
+	}
+	if req.CaseTitle == "" {
+		req.CaseTitle = caseData.Title
+	}
+	if req.DisputeType == "" {
+		req.DisputeType = caseData.TypeName
+	}
+
+	if req.ProtocolYear == 0 {
+		req.ProtocolYear = time.Now().Year()
+	}
+	if req.ProtocolSeq == 0 {
+		var count int64
+		database.GetDB().Table("mediation_protocol").
+			Where("case_id = ?", caseID).
+			Count(&count)
+		req.ProtocolSeq = int(count) + 1
+	}
+	if req.SignDate == "" {
+		req.SignDate = time.Now().Format("2006-01-02")
+	}
+
+	params := &ai.MediationProtocolParams{
+		CaseID:             caseID,
+		CaseNo:             req.CaseNo,
+		CaseTitle:          req.CaseTitle,
+		DisputeType:        req.DisputeType,
+		PartyAName:         req.PartyAName,
+		PartyAGender:       req.PartyAGender,
+		PartyAIDCard:       req.PartyAIDCard,
+		PartyAAddress:      req.PartyAAddress,
+		PartyAPhone:        req.PartyAPhone,
+		PartyBName:         req.PartyBName,
+		PartyBGender:       req.PartyBGender,
+		PartyBIDCard:       req.PartyBIDCard,
+		PartyBAddress:      req.PartyBAddress,
+		PartyBPhone:        req.PartyBPhone,
+		DisputeSummary:     req.DisputeSummary,
+		LiabilityParty:     req.LiabilityParty,
+		LiabilityRatioA:    req.LiabilityRatioA,
+		LiabilityRatioB:    req.LiabilityRatioB,
+		LiabilityReason:    req.LiabilityReason,
+		CompensationAmount: req.CompensationAmount,
+		CompensationType:   req.CompensationType,
+		PaymentMethod:      req.PaymentMethod,
+		PerformanceDate:    req.PerformanceDate,
+		PaymentAccount:     req.PaymentAccount,
+		OtherTerms:         req.OtherTerms,
+		BreachClause:       req.BreachClause,
+		MediatorName:       caseData.MediatorName,
+		SignPlace:          req.SignPlace,
+		SignDate:           req.SignDate,
+		RegionPrefix:       req.RegionPrefix,
+		ProtocolYear:       req.ProtocolYear,
+		ProtocolSeq:        req.ProtocolSeq,
+	}
+
+	result, err := ai.GenerateMediationProtocol(params)
+	if err != nil {
+		logger.Error("AI generate mediation protocol failed",
+			logger.Int64("caseId", caseID),
+			logger.Error(err),
+		)
+		c.JSON(http.StatusInternalServerError, response.ServerError("生成调解协议失败，请稍后重试"))
+		return
+	}
+
+	protocolID := utils.GenerateID()
+	tx := database.GetDB().Begin()
+	protocolData := map[string]interface{}{
+		"id":               protocolID,
+		"case_id":          caseID,
+		"protocol_no":      result.ProtocolNo,
+		"title":            result.Title,
+		"content":          result.Content,
+		"party_a_name":     result.PartyAName,
+		"party_b_name":     result.PartyBName,
+		"mediator_name":    result.MediatorName,
+		"agreement_items":  result.AgreementItems,
+		"breach_clause":    result.BreachClause,
+		"is_signed":        0,
+		"is_ai_generated":  1,
+		"ai_generated_at":  time.Now(),
+		"created_by":       userInfo.UserID,
+	}
+	if err := tx.Table("mediation_protocol").Create(protocolData).Error; err != nil {
+		tx.Rollback()
+		logger.Error("Save mediation protocol failed", logger.Error(err))
+		c.JSON(http.StatusInternalServerError, response.ServerError("保存协议失败"))
+		return
+	}
+
+	legalBasisJSON, _ := json.Marshal(result.LegalBasis)
+	aiLog := map[string]interface{}{
+		"id":               utils.GenerateID(),
+		"case_id":          caseID,
+		"record_type":      "mediation_protocol",
+		"ref_id":           protocolID,
+		"original_params":  fmt.Sprintf("%+v", req),
+		"ai_content":       result.Content,
+		"legal_basis":      string(legalBasisJSON),
+		"tokens_used":      0,
+		"cost_time":        0,
+		"created_by":       userInfo.UserID,
+	}
+	tx.Table("ai_generation_log").Create(aiLog)
+
+	history := map[string]interface{}{
+		"case_id":          caseID,
+		"case_no":          caseData.CaseNo,
+		"operation_type":   "PROTOCOL_AI_GENERATE",
+		"operation_detail": fmt.Sprintf("AI生成调解协议，协议编号: %s", result.ProtocolNo),
+		"operator_id":      userInfo.UserID,
+		"operator_name":    userInfo.RealName,
+	}
+	tx.Table("dispute_case_history").Create(history)
+
+	tx.Commit()
+
+	cacheKey := fmt.Sprintf("%s%d", constants.RedisKeyPrefixCase, caseID)
+	cache.Del(ctx, cacheKey)
+
+	c.JSON(http.StatusOK, response.Success(map[string]interface{}{
+		"protocolId":     protocolID,
+		"protocolNo":     result.ProtocolNo,
+		"title":          result.Title,
+		"content":        result.Content,
+		"partyAName":     result.PartyAName,
+		"partyBName":     result.PartyBName,
+		"mediatorName":   result.MediatorName,
+		"agreementItems": result.AgreementItems,
+		"breachClause":   result.BreachClause,
+		"legalBasis":     result.LegalBasis,
+		"generatedAt":    result.GeneratedAt,
+	}))
+}
+
+func GetMediationProtocolList(ctx context.Context, c *app.RequestContext) {
+	caseID, _ := strconv.ParseInt(c.Param("id"), 10, 64)
+
+	var list []map[string]interface{}
+	database.GetDB().Table("mediation_protocol").
+		Where("case_id = ?", caseID).
+		Order("id DESC").
+		Find(&list)
+
+	c.JSON(http.StatusOK, response.Success(list))
+}
+
+func AdoptMediationProtocol(ctx context.Context, c *app.RequestContext) {
+	caseID, _ := strconv.ParseInt(c.Param("id"), 10, 64)
+	protocolID, _ := strconv.ParseInt(c.Param("protocolId"), 10, 64)
+	userInfo := middleware.GetUserInfo(c)
+
+	var protocol struct {
+		IsSigned       int32  `gorm:"column:is_signed"`
+		CaseID         int64  `gorm:"column:case_id"`
+		Content        string `gorm:"column:content"`
+		AgreementItems string `gorm:"column:agreement_items"`
+	}
+	database.GetDB().Table("mediation_protocol").
+		Where("id = ?", protocolID).
+		First(&protocol)
+
+	if protocol.CaseID != caseID {
+		c.JSON(http.StatusBadRequest, response.BadRequest("协议与案件不匹配"))
+		return
+	}
+
+	updates := map[string]interface{}{
+		"adopted_by":   userInfo.UserID,
+		"adopted_at":   time.Now(),
+		"is_adopted":   1,
+	}
+
+	tx := database.GetDB().Begin()
+	tx.Table("mediation_protocol").Where("id = ?", protocolID).Updates(updates)
+
+	tx.Table("dispute_case").
+		Where("id = ?", caseID).
+		Updates(map[string]interface{}{
+			"agreement_content": protocol.Content,
+		})
+
+	history := map[string]interface{}{
+		"case_id":          caseID,
+		"operation_type":   "PROTOCOL_ADOPT",
+		"operation_detail": fmt.Sprintf("采用AI生成的调解协议，协议ID: %d", protocolID),
+		"operator_id":      userInfo.UserID,
+		"operator_name":    userInfo.RealName,
+	}
+	tx.Table("dispute_case_history").Create(history)
+	tx.Commit()
+
+	cacheKey := fmt.Sprintf("%s%d", constants.RedisKeyPrefixCase, caseID)
+	cache.Del(ctx, cacheKey)
+
+	c.JSON(http.StatusOK, response.SuccessWithMessage(nil, "协议已采用，已同步至案件协议内容"))
 }

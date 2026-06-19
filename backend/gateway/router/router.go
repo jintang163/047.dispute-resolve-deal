@@ -88,6 +88,9 @@ func RegisterRoutes(h *app.Hertz) {
 				mediation.POST("", handler.CreateMediationRecord)
 				mediation.PUT("/:recordId", handler.UpdateMediationRecord)
 				mediation.GET("/:recordId/ai-summary", handler.GetAISummary)
+				mediation.POST("/protocol/generate", handler.GenerateMediationProtocol)
+				mediation.GET("/protocols", handler.GetMediationProtocolList)
+				mediation.POST("/protocol/:protocolId/adopt", handler.AdoptMediationProtocol)
 			}
 
 			approval := dispute.Group("/:id/approval")

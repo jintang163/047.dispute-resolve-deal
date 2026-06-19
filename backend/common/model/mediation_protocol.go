@@ -18,6 +18,11 @@ type MediationProtocol struct {
 	SignedAt        *time.Time `json:"signedAt"`
 	FileURL         string     `gorm:"size:500" json:"fileUrl"`
 	CreatedBy       int64      `json:"createdBy"`
+	IsAIGenerated   int32      `gorm:"default:0" json:"isAIGenerated"`
+	AIGeneratedAt   *time.Time `json:"aiGeneratedAt"`
+	IsAdopted       int32      `gorm:"default:0" json:"isAdopted"`
+	AdoptedBy       int64      `json:"adoptedBy"`
+	AdoptedAt       *time.Time `json:"adoptedAt"`
 }
 
 func (MediationProtocol) TableName() string {
