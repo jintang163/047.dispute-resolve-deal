@@ -126,21 +126,11 @@ const MediationList: React.FC = () => {
         </Button>,
         <Button
           type="link"
-          key="ai-protocol"
-          icon={<RobotOutlined />}
-          onClick={() => {
-            setProtocolCaseId(String(record.caseId));
-            setProtocolDrawerOpen(true);
-          }}
-        >
-          AI协议
-        </Button>,
-        <Button
-          type="link"
           key="protocol"
           icon={<FileTextOutlined />}
           onClick={() => {
-            message.info('查看调解协议');
+            setProtocolCaseId(String(record.caseId));
+            setProtocolDrawerOpen(true);
           }}
         >
           协议

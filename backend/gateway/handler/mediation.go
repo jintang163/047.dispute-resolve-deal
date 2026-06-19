@@ -533,6 +533,7 @@ func GenerateMediationProtocol(ctx context.Context, c *app.RequestContext) {
 	cache.Del(ctx, cacheKey)
 
 	c.JSON(http.StatusOK, response.Success(map[string]interface{}{
+		"id":             protocolID,
 		"protocolId":     protocolID,
 		"protocolNo":     result.ProtocolNo,
 		"title":          result.Title,
@@ -544,19 +545,72 @@ func GenerateMediationProtocol(ctx context.Context, c *app.RequestContext) {
 		"breachClause":   result.BreachClause,
 		"legalBasis":     result.LegalBasis,
 		"generatedAt":    result.GeneratedAt,
+		"isAIGenerated":  1,
+		"isSigned":       0,
+		"isAdopted":      0,
 	}))
 }
 
 func GetMediationProtocolList(ctx context.Context, c *app.RequestContext) {
 	caseID, _ := strconv.ParseInt(c.Param("id"), 10, 64)
 
-	var list []map[string]interface{}
+	var rawList []map[string]interface{}
 	database.GetDB().Table("mediation_protocol").
 		Where("case_id = ?", caseID).
 		Order("id DESC").
-		Find(&list)
+		Find(&rawList)
 
-	c.JSON(http.StatusOK, response.Success(list))
+	result := make([]map[string]interface{}, 0, len(rawList))
+	for _, item := range rawList {
+		converted := make(map[string]interface{})
+		for k, v := range item {
+			switch k {
+			case "protocol_no":
+				converted["protocolNo"] = v
+			case "party_a_name":
+				converted["partyAName"] = v
+			case "party_b_name":
+				converted["partyBName"] = v
+			case "mediator_name":
+				converted["mediatorName"] = v
+			case "agreement_items":
+				converted["agreementItems"] = v
+			case "breach_clause":
+				converted["breachClause"] = v
+			case "effective_date":
+				converted["effectiveDate"] = v
+			case "is_signed":
+				converted["isSigned"] = v
+			case "signed_at":
+				converted["signedAt"] = v
+			case "file_url":
+				converted["fileUrl"] = v
+			case "created_by":
+				converted["createdBy"] = v
+			case "is_ai_generated":
+				converted["isAIGenerated"] = v
+			case "ai_generated_at":
+				converted["aiGeneratedAt"] = v
+			case "is_adopted":
+				converted["isAdopted"] = v
+			case "adopted_by":
+				converted["adoptedBy"] = v
+			case "adopted_at":
+				converted["adoptedAt"] = v
+			case "created_at":
+				converted["createdAt"] = v
+			case "updated_at":
+				converted["updatedAt"] = v
+			case "deleted_at":
+				converted["deletedAt"] = v
+			default:
+				converted[k] = v
+			}
+		}
+		result = append(result, converted)
+	}
+
+	c.JSON(http.StatusOK, response.Success(result))
 }
 
 func AdoptMediationProtocol(ctx context.Context, c *app.RequestContext) {
