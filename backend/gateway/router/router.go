@@ -52,6 +52,7 @@ func RegisterRoutes(h *app.Hertz) {
 		public.POST("/dispute/miniapp/create", handler.MiniAppCreateDispute)
 		public.GET("/dispute/progress", handler.GetDisputeProgress)
 		public.POST("/ai/consult", handler.AIConsult)
+		public.POST("/video/record-callback", handler.RecordCallback)
 	}
 
 	userAuth := api.Group("", middleware.JWTAuthMiddleware())
@@ -109,6 +110,25 @@ func RegisterRoutes(h *app.Hertz) {
 				video.GET("/:roomId/token", handler.GetVideoRoomToken)
 				video.POST("/:roomId/end", handler.EndVideoRoom)
 				video.POST("/:roomId/cancel", handler.CancelVideoRoom)
+				video.POST("/trtc/usersig", handler.GetTRTCUserSig)
+				video.POST("/record/start", handler.StartVideoRecord)
+				video.POST("/record/stop", handler.StopVideoRecord)
+				video.GET("/:roomId/segments", handler.GetVideoRecordSegments)
+				video.POST("/screen-share", handler.UpdateScreenShare)
+				video.POST("/virtual-bg", handler.UpdateVirtualBackground)
+				video.POST("/beauty", handler.UpdateBeautyFilter)
+				video.POST("/minutes/generate", handler.GenerateVideoMinutes)
+				video.GET("/:roomId/minutes", handler.GetVideoMeetingMinutes)
+				video.POST("/minutes/:minutesId/approve", handler.ApproveVideoMinutes)
+			}
+
+			videoQueue := dispute.Group("/video-queue")
+			{
+				videoQueue.POST("/enqueue", handler.EnqueueVideoMediation)
+				videoQueue.GET("/position", handler.GetVideoQueuePosition)
+				videoQueue.GET("/list", handler.GetVideoQueueList)
+				videoQueue.POST("/leave", handler.LeaveVideoQueue)
+				videoQueue.GET("/status", handler.GetVideoQueueStatus)
 			}
 
 			esign := dispute.Group("/:id/esign")

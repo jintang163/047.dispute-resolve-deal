@@ -11,6 +11,7 @@ import {
   SettingOutlined,
   SafetyCertificateOutlined,
   BankOutlined,
+  VideoCameraOutlined,
 } from '@ant-design/icons';
 
 export interface MenuItem {
@@ -50,6 +51,12 @@ export const menuConfig: MenuItem[] = [
     label: '调解记录',
     icon: React.createElement(AuditOutlined),
     path: '/mediation',
+  },
+  {
+    key: 'video',
+    label: '视频调解室',
+    icon: React.createElement(VideoCameraOutlined),
+    path: '/video',
   },
   {
     key: 'approval',

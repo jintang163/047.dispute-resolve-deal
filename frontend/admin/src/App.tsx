@@ -1,11 +1,13 @@
 import React, { useEffect } from 'react';
-import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate, useLocation, useParams, useNavigate } from 'react-router-dom';
 import BasicLayout from './layouts/BasicLayout';
 import Login from './pages/Login';
 import DisputeList from './pages/Dispute/List';
 import DisputeDetail from './pages/Dispute/Detail';
 import DisputeCreate from './pages/Dispute/Create';
 import MediationList from './pages/Mediation/List';
+import VideoMediation from './pages/Video';
+import VideoRoom from './pages/Video/VideoRoom';
 import TodoApproval from './pages/Approval/Todo';
 import DoneApproval from './pages/Approval/Done';
 import Dashboard from './pages/Stats/Dashboard';
@@ -35,6 +37,27 @@ const PrivateRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => 
   return <>{children}</>;
 };
 
+const VideoRoomPage: React.FC = () => {
+  const { caseId, roomId } = useParams();
+  const navigate = useNavigate();
+  const caseIdNum = parseInt(caseId || '0');
+  const roomIdNum = parseInt(roomId || '0');
+  const userInfo = useUserStore((state) => state.userInfo);
+
+  return (
+    <VideoRoom
+      caseId={caseIdNum}
+      roomId={roomId || ''}
+      trtcRoomId={roomIdNum}
+      userId={String(userInfo?.id || 0)}
+      userSig=""
+      sdkAppId={0}
+      isHost={true}
+      onClose={() => navigate('/video')}
+    />
+  );
+};
+
 const App: React.FC = () => {
   return (
     <BrowserRouter>
@@ -56,6 +79,8 @@ const App: React.FC = () => {
             <Route path=":id" element={<DisputeDetail />} />
           </Route>
           <Route path="mediation" element={<MediationList />} />
+          <Route path="video" element={<VideoMediation />} />
+          <Route path="video/room/:caseId/:roomId" element={<VideoRoomPage />} />
           <Route path="approval">
             <Route index element={<Navigate to="/approval/todo" replace />} />
             <Route path="todo" element={<TodoApproval />} />

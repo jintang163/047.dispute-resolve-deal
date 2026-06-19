@@ -19,6 +19,7 @@ type Config struct {
 	Milvus       MilvusConfig       `mapstructure:"milvus"`
 	Flowable     FlowableConfig     `mapstructure:"flowable"`
 	Court        CourtConfig        `mapstructure:"court"`
+	TRTC         TRTCConfig         `mapstructure:"trtc"`
 	Services     ServicesConfig     `mapstructure:"services"`
 	ServicePorts ServicePortsConfig `mapstructure:"service-ports"`
 }
@@ -144,6 +145,17 @@ type CourtConfig struct {
 	APIAppID    string `mapstructure:"api_app_id"`
 	APISecret   string `mapstructure:"api_secret"`
 	APIPublicKey string `mapstructure:"api_public_key"`
+}
+
+type TRTCConfig struct {
+	SdkAppID           uint32 `mapstructure:"sdk_app_id"`
+	SecretKey          string `mapstructure:"secret_key"`
+	AdminUserID        string `mapstructure:"admin_user_id"`
+	RecordCallbackURL  string `mapstructure:"record_callback_url"`
+	RecordStoragePath  string `mapstructure:"record_storage_path"`
+	RecordSegmentSec   int    `mapstructure:"record_segment_sec"`
+	MaxQueueSize       int    `mapstructure:"max_queue_size"`
+	QueueCheckInterval int    `mapstructure:"queue_check_interval"`
 }
 
 var (

@@ -79,3 +79,13 @@ service-ports:
   workflow: 9003
   ai: 9004
   notification: 9005
+
+trtc:
+  sdk_app_id: 1400000000
+  secret_key: "your-trtc-secret-key"
+  admin_user_id: "administrator"
+  record_callback_url: "https://your-domain.com/api/v1/video/record-callback"
+  record_storage_path: "dispute/video"
+  record_segment_sec: 600
+  max_queue_size: 50
+  queue_check_interval: 30

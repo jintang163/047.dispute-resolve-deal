@@ -67,6 +67,20 @@ const (
 	VideoStatusEnded      = 30
 	VideoStatusCancelled  = 40
 
+	VideoRecordStatusIdle     = 0
+	VideoRecordStatusRecording = 1
+	VideoRecordStatusStopped  = 2
+	VideoRecordStatusFailed   = 3
+
+	VideoQueueStatusWaiting  = 1
+	VideoQueueStatusEntered  = 2
+	VideoQueueStatusCancelled = 3
+	VideoQueueStatusTimeout  = 4
+
+	VideoMinutesStatusGenerated = 1
+	VideoMinutesStatusApproved  = 2
+	VideoMinutesStatusRevoked   = 3
+
 	KioskStatusOffline = 0
 	KioskStatusOnline  = 1
 	KioskStatusFault   = 2
@@ -78,6 +92,7 @@ const (
 	RedisKeyPrefixRateLimit = "ratelimit:"
 	RedisKeyPrefixQueue     = "queue:"
 	RedisKeyPrefixJudicial  = "judicial:"
+	RedisKeyPrefixVideo     = "video:"
 
 	RedisExpireToken     = 86400
 	RedisExpireUser      = 3600
@@ -98,6 +113,8 @@ const (
 	MQTopicJudicialSync   = "judicial_confirmation_sync"
 	MQTopicJudicialSeal   = "judicial_confirmation_seal"
 	MQTopicJudicialRemind = "judicial_confirmation_remind"
+	MQTopicVideoRecord   = "dispute_video_record"
+	MQTopicVideoQueue    = "dispute_video_queue"
 
 	MQTagAll     = "*"
 	MQTagSms     = "sms"
