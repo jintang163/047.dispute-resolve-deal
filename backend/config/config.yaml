@@ -84,8 +84,13 @@ trtc:
   sdk_app_id: 1400000000
   secret_key: "your-trtc-secret-key"
   admin_user_id: "administrator"
-  record_callback_url: "https://your-domain.com/api/v1/video/record-callback"
+  record_callback_url: "https://your-domain.com/api/v1/public/video/record-callback"
   record_storage_path: "dispute/video"
   record_segment_sec: 600
   max_queue_size: 50
   queue_check_interval: 30
+  tencent_cos:
+    region: "ap-guangzhou"
+    bucket: "dispute-trtc-record-1300000000"
+    secret_id: "your-cos-secret-id"
+    secret_key: "your-cos-secret-key"

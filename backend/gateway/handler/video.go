@@ -2,6 +2,9 @@ package handler
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -11,6 +14,7 @@ import (
 
 	"github.com/dispute-resolve/common/ai"
 	"github.com/dispute-resolve/common/cache"
+	"github.com/dispute-resolve/common/config"
 	"github.com/dispute-resolve/common/constants"
 	"github.com/dispute-resolve/common/database"
 	"github.com/dispute-resolve/common/logger"
@@ -21,6 +25,7 @@ import (
 	"github.com/dispute-resolve/gateway/middleware"
 
 	"github.com/cloudwego/hertz/pkg/app"
+	"go.uber.org/zap"
 )
 
 type VideoRoomCreateRequest struct {
@@ -525,6 +530,13 @@ func EndVideoRoom(ctx context.Context, c *app.RequestContext) {
 
 	queueSvc := trtc.GetVideoQueueService()
 	queueSvc.DecrementActiveRoomCount(ctx)
+
+	go func() {
+		time.Sleep(1 * time.Second)
+		if err := queueSvc.CheckAndNotify(ctx); err != nil {
+			logger.Warn("Check and notify queue after end room failed", logger.Error(err))
+		}
+	}()
 
 	c.JSON(http.StatusOK, response.SuccessWithMessage(nil, "会议已结束"))
 }
@@ -1062,6 +1074,29 @@ func UpdateBeautyFilter(ctx context.Context, c *app.RequestContext) {
 }
 
 func RecordCallback(ctx context.Context, c *app.RequestContext) {
+	signature := c.Query("sdk_signature")
+	timestampStr := c.Query("sdk_timestamp")
+	nonce := c.Query("sdk_nonce")
+	event := c.Query("sdk_event")
+
+	cfg := config.GetConfig()
+	if cfg.TRTC.SecretKey != "" && signature != "" {
+		timestampInt, _ := strconv.ParseInt(timestampStr, 10, 64)
+		now := time.Now().Unix()
+		if timestampInt > 0 && (now-timestampInt > 300 || now-timestampInt < -300) {
+			logger.Warn("TRTC record callback timestamp invalid", zap.Int64("ts", timestampInt))
+			c.JSON(http.StatusForbidden, response.Forbidden("请求已过期"))
+			return
+		}
+
+		expectedSig := hmacSha256Sign(cfg.TRTC.SecretKey, fmt.Sprintf("%s%s%s", timestampStr, nonce, event))
+		if !strings.EqualFold(signature, expectedSig) {
+			logger.Warn("TRTC record callback signature verification failed")
+			c.JSON(http.StatusForbidden, response.Forbidden("签名校验失败"))
+			return
+		}
+	}
+
 	var callbackData map[string]interface{}
 	if err := c.BindAndValidate(&callbackData); err != nil {
 		c.JSON(http.StatusBadRequest, response.BadRequest(err.Error()))
@@ -1078,14 +1113,23 @@ func RecordCallback(ctx context.Context, c *app.RequestContext) {
 	})
 }
 
+func hmacSha256Sign(key, data string) string {
+	mac := hmac.New(sha256.New, []byte(key))
+	mac.Write([]byte(data))
+	return hex.EncodeToString(mac.Sum(nil))
+}
+
 func GetVideoQueueStatus(ctx context.Context, c *app.RequestContext) {
-	rdb := database.GetRedisClient()
-	queueLen, _ := rdb.ZCard(ctx, "video:mediation:queue").Result()
-	activeRooms, _ := rdb.Get(ctx, "video:active_rooms:count").Int()
+	queueLen, _ := cache.ZCard(ctx, "video:mediation:queue")
+	activeRoomsStr, _ := cache.Get(ctx, "video:active_rooms:count")
+	activeRooms := 0
+	if activeRoomsStr != "" {
+		fmt.Sscanf(activeRoomsStr, "%d", &activeRooms)
+	}
 
 	c.JSON(http.StatusOK, response.Success(map[string]interface{}{
-		"queueLength":  queueLen,
-		"activeRooms":  activeRooms,
+		"queueLength":   queueLen,
+		"activeRooms":   activeRooms,
 		"estimatedWait": queueLen * 10,
 	}))
 }

@@ -36,6 +36,7 @@ func main() {
 		EnableMilvus:   true,
 		EnableMinIO:    true,
 		EnableCourt:    true,
+		EnableTRTC:     true,
 		LogLevel:       "info",
 	})
 	defer initResult.Stop()

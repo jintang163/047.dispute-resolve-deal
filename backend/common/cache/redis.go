@@ -117,3 +117,28 @@ func DelByPrefix(ctx context.Context, prefix string) (int, error) {
 
 	return deleted, nil
 }
+
+func ZAdd(ctx context.Context, key string, member string, score float64) error {
+	z := redis.Z{Score: score, Member: member}
+	return client.ZAdd(ctx, key, z).Err()
+}
+
+func ZRange(ctx context.Context, key string, start, stop int64) ([]string, error) {
+	return client.ZRange(ctx, key, start, stop).Result()
+}
+
+func ZRank(ctx context.Context, key string, member string) (int64, error) {
+	return client.ZRank(ctx, key, member).Result()
+}
+
+func ZCard(ctx context.Context, key string) (int64, error) {
+	return client.ZCard(ctx, key).Result()
+}
+
+func ZRem(ctx context.Context, key string, member string) error {
+	return client.ZRem(ctx, key, member).Err()
+}
+
+func ZRangeWithScores(ctx context.Context, key string, start, stop int64) ([]redis.Z, error) {
+	return client.ZRangeWithScores(ctx, key, start, stop).Result()
+}

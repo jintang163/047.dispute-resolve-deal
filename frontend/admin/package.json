@@ -21,7 +21,8 @@
     "axios": "^1.6.2",
     "zustand": "^4.4.7",
     "dayjs": "^1.11.10",
-    "@umijs/max": "^4.0.90"
+    "@umijs/max": "^4.0.90",
+    "trtc-js-sdk": "^5.0.0"
   },
   "devDependencies": {
     "@types/react": "^18.2.43",

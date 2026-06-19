@@ -13,6 +13,7 @@ import (
 	"github.com/dispute-resolve/common/logger"
 	"github.com/dispute-resolve/common/mq"
 	"github.com/dispute-resolve/common/model"
+	"github.com/dispute-resolve/common/trtc"
 	"github.com/dispute-resolve/gateway/service"
 
 	"github.com/robfig/cron/v3"
@@ -51,6 +52,8 @@ func StartCronTasks() {
 		addCronTask("0 */10 * * * ?", checkSatisfactionEvalTask, "check_satisfaction_eval")
 		addCronTask("0 0 9 * * ?", judicialPerformanceReminderTask, "judicial_performance_reminder")
 		addCronTask("0 0 9 * * ?", judicialExpirationReminderTask, "judicial_expiration_reminder")
+		addCronTask("0 */10 * * * ?", videoRecordSegmentTask, "video_record_segment")
+		addCronTask("0 */1 * * * ?", videoQueueCheckTask, "video_queue_check")
 
 		cronInstance.Start()
 		logger.Info("All cron tasks started", zap.Int("taskCount", len(entryIDs)))
@@ -883,4 +886,50 @@ func judicialExpirationReminderTask() {
 		zap.Int("remindedCount", remindedCount),
 		zap.Duration("elapsed", elapsed),
 	)
+}
+
+func videoRecordSegmentTask() {
+	ctx := context.Background()
+	lockKey := constants.RedisKeyPrefixLock + "cron:video_record_segment"
+
+	locked, err := acquireLock(ctx, lockKey, 300*time.Second)
+	if err != nil || !locked {
+		logger.Debug("Skip video record segment task, lock not acquired")
+		return
+	}
+	defer releaseLock(ctx, lockKey)
+
+	logger.Info("Starting video record segment task")
+	startTime := time.Now()
+
+	recordSvc := trtc.GetCloudRecordService()
+	if err := recordSvc.TriggerAutoSegment(ctx); err != nil {
+		logger.Error("Video record segment task failed", logger.Error(err))
+	}
+
+	elapsed := time.Since(startTime)
+	logger.Info("Video record segment task completed", zap.Duration("elapsed", elapsed))
+}
+
+func videoQueueCheckTask() {
+	ctx := context.Background()
+	lockKey := constants.RedisKeyPrefixLock + "cron:video_queue_check"
+
+	locked, err := acquireLock(ctx, lockKey, 120*time.Second)
+	if err != nil || !locked {
+		logger.Debug("Skip video queue check task, lock not acquired")
+		return
+	}
+	defer releaseLock(ctx, lockKey)
+
+	logger.Debug("Starting video queue check task")
+	startTime := time.Now()
+
+	queueSvc := trtc.GetVideoQueueService()
+	if err := queueSvc.CheckAndNotify(ctx); err != nil {
+		logger.Error("Video queue check task failed", logger.Error(err))
+	}
+
+	elapsed := time.Since(startTime)
+	logger.Debug("Video queue check task completed", zap.Duration("elapsed", elapsed))
 }

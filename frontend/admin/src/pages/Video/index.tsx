@@ -27,11 +27,13 @@ import {
   EyeOutlined,
 } from '@ant-design/icons';
 import dayjs from 'dayjs';
+import { useNavigate } from 'react-router-dom';
 import { videoApi, queueApi } from '../../services/video';
 
 const { RangePicker } = DatePicker;
 
 const VideoMediation: React.FC = () => {
+  const navigate = useNavigate();
   const [rooms, setRooms] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [createModalVisible, setCreateModalVisible] = useState(false);
@@ -167,9 +169,21 @@ const VideoMediation: React.FC = () => {
     {
       title: '操作',
       key: 'action',
-      width: 120,
+      width: 200,
       render: (_: any, record: any) => (
         <Space>
+          {(record.status === 10 || record.status === 20) && (
+            <Tooltip title="进入调解室">
+              <Button
+                size="small"
+                type="primary"
+                icon={<VideoCameraOutlined />}
+                onClick={() => navigate(`/video/room/${record.case_id}/${record.room_id}`)}
+              >
+                进入
+              </Button>
+            </Tooltip>
+          )}
           <Tooltip title="查看详情">
             <Button size="small" icon={<EyeOutlined />} onClick={() => handleViewDetail(record)} />
           </Tooltip>
@@ -333,6 +347,21 @@ const VideoMediation: React.FC = () => {
                   </Tag>
                 ))}
               </Card>
+            )}
+            {(currentRoom.status === 10 || currentRoom.status === 20) && (
+              <div style={{ marginTop: 24, textAlign: 'center' }}>
+                <Button
+                  type="primary"
+                  size="large"
+                  icon={<VideoCameraOutlined />}
+                  onClick={() => {
+                    setRoomDetailVisible(false);
+                    navigate(`/video/room/${currentRoom.case_id}/${currentRoom.room_id}`);
+                  }}
+                >
+                  进入视频调解室
+                </Button>
+              </div>
             )}
           </div>
         )}

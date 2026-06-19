@@ -13,6 +13,7 @@ import (
 	"github.com/dispute-resolve/common/court"
 	"github.com/dispute-resolve/common/database"
 	"github.com/dispute-resolve/common/logger"
+	"github.com/dispute-resolve/common/trtc"
 	"github.com/dispute-resolve/common/utils"
 	"github.com/dispute-resolve/common/vector"
 	"github.com/dispute-resolve/common/workflow"
@@ -27,6 +28,7 @@ type InitOptions struct {
 	EnableMilvus   bool
 	EnableMinIO    bool
 	EnableCourt    bool
+	EnableTRTC     bool
 	LogLevel       string
 }
 
@@ -106,6 +108,13 @@ func InitServiceWithOptions(opts InitOptions) *InitResult {
 	if opts.EnableCourt {
 		court.InitMicroCourt()
 		logger.Info("MicroCourt client initialized")
+	}
+
+	if opts.EnableTRTC {
+		trtc.InitTRTC()
+		trtc.InitCloudRecordService()
+		trtc.InitVideoQueueService()
+		logger.Info("TRTC video mediation services initialized")
 	}
 
 	stop := setupGracefulShutdown(opts.ServiceName)

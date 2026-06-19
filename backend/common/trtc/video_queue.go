@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/dispute-resolve/common/cache"
 	"github.com/dispute-resolve/common/config"
 	"github.com/dispute-resolve/common/database"
 	"github.com/dispute-resolve/common/logger"
@@ -15,8 +16,8 @@ import (
 )
 
 type VideoQueueService struct {
-	cfg       *config.TRTCConfig
-	queueKey  string
+	cfg      *config.TRTCConfig
+	queueKey string
 }
 
 var videoQueueService *VideoQueueService
@@ -51,9 +52,7 @@ type QueueItem struct {
 }
 
 func (s *VideoQueueService) Enqueue(ctx context.Context, item *QueueItem) (int, error) {
-	rdb := database.GetRedisClient()
-
-	queueLen, err := rdb.ZCard(ctx, s.queueKey).Result()
+	queueLen, err := cache.ZCard(ctx, s.queueKey)
 	if err != nil {
 		return 0, fmt.Errorf("get queue length failed: %w", err)
 	}
@@ -69,14 +68,15 @@ func (s *VideoQueueService) Enqueue(ctx context.Context, item *QueueItem) (int, 
 
 	data, _ := json.Marshal(item)
 	score := float64(item.Priority)*1e12 + float64(item.EnqueueTime)
+	member := fmt.Sprintf("%d:%d", item.CaseID, item.PartyUserID)
 
-	err = rdb.ZAdd(ctx, s.queueKey, fmt.Sprintf("%d:%s", item.CaseID, item.PartyUserID), float64(score)).Err()
+	err = cache.ZAdd(ctx, s.queueKey, member, score)
 	if err != nil {
 		return 0, fmt.Errorf("enqueue failed: %w", err)
 	}
 
-	cacheKey := fmt.Sprintf("video:queue:item:%d:%d", item.CaseID, item.PartyUserID)
-	rdb.Set(ctx, cacheKey, string(data), 24*time.Hour)
+	cacheKey := fmt.Sprintf("video:queue:item:%s", member)
+	cache.Set(ctx, cacheKey, string(data), 24*time.Hour)
 
 	position, _ := s.GetPosition(ctx, item.CaseID, item.PartyUserID)
 
@@ -107,25 +107,23 @@ func (s *VideoQueueService) Enqueue(ctx context.Context, item *QueueItem) (int, 
 }
 
 func (s *VideoQueueService) Dequeue(ctx context.Context) (*QueueItem, error) {
-	rdb := database.GetRedisClient()
-
-	results, err := rdb.ZRange(ctx, s.queueKey, 0, 0).Result()
+	results, err := cache.ZRange(ctx, s.queueKey, 0, 0)
 	if err != nil || len(results) == 0 {
 		return nil, nil
 	}
 
 	member := results[0]
-	err = rdb.ZRem(ctx, s.queueKey, member).Err()
+	err = cache.ZRem(ctx, s.queueKey, member)
 	if err != nil {
 		return nil, fmt.Errorf("dequeue failed: %w", err)
 	}
 
 	cacheKey := fmt.Sprintf("video:queue:item:%s", member)
-	data, err := rdb.Get(ctx, cacheKey).Result()
+	data, err := cache.Get(ctx, cacheKey)
 	if err != nil {
 		return nil, fmt.Errorf("get queue item data failed: %w", err)
 	}
-	rdb.Del(ctx, cacheKey)
+	cache.Del(ctx, cacheKey)
 
 	var item QueueItem
 	if err := json.Unmarshal([]byte(data), &item); err != nil {
@@ -135,7 +133,7 @@ func (s *VideoQueueService) Dequeue(ctx context.Context) (*QueueItem, error) {
 	database.GetDB().Table("video_queue").
 		Where("case_id = ? AND party_user_id = ? AND status = 1", item.CaseID, item.PartyUserID).
 		Updates(map[string]interface{}{
-			"status":      2,
+			"status":       2,
 			"dequeue_time": time.Now(),
 		})
 
@@ -143,10 +141,8 @@ func (s *VideoQueueService) Dequeue(ctx context.Context) (*QueueItem, error) {
 }
 
 func (s *VideoQueueService) GetPosition(ctx context.Context, caseID, userID int64) (int, error) {
-	rdb := database.GetRedisClient()
-
 	member := fmt.Sprintf("%d:%d", caseID, userID)
-	rank, err := rdb.ZRank(ctx, s.queueKey, member).Result()
+	rank, err := cache.ZRank(ctx, s.queueKey, member)
 	if err != nil {
 		return -1, nil
 	}
@@ -155,9 +151,7 @@ func (s *VideoQueueService) GetPosition(ctx context.Context, caseID, userID int6
 }
 
 func (s *VideoQueueService) GetQueueList(ctx context.Context) ([]*QueueItem, error) {
-	rdb := database.GetRedisClient()
-
-	members, err := rdb.ZRange(ctx, s.queueKey, 0, -1).Result()
+	members, err := cache.ZRange(ctx, s.queueKey, 0, -1)
 	if err != nil {
 		return nil, err
 	}
@@ -165,7 +159,7 @@ func (s *VideoQueueService) GetQueueList(ctx context.Context) ([]*QueueItem, err
 	var items []*QueueItem
 	for _, member := range members {
 		cacheKey := fmt.Sprintf("video:queue:item:%s", member)
-		data, err := rdb.Get(ctx, cacheKey).Result()
+		data, err := cache.Get(ctx, cacheKey)
 		if err != nil {
 			continue
 		}
@@ -181,21 +175,19 @@ func (s *VideoQueueService) GetQueueList(ctx context.Context) ([]*QueueItem, err
 }
 
 func (s *VideoQueueService) RemoveFromQueue(ctx context.Context, caseID, userID int64) error {
-	rdb := database.GetRedisClient()
-
 	member := fmt.Sprintf("%d:%d", caseID, userID)
-	err := rdb.ZRem(ctx, s.queueKey, member).Err()
+	err := cache.ZRem(ctx, s.queueKey, member)
 	if err != nil {
 		return err
 	}
 
 	cacheKey := fmt.Sprintf("video:queue:item:%s", member)
-	rdb.Del(ctx, cacheKey)
+	cache.Del(ctx, cacheKey)
 
 	database.GetDB().Table("video_queue").
 		Where("case_id = ? AND party_user_id = ? AND status = 1", caseID, userID).
 		Updates(map[string]interface{}{
-			"status":      3,
+			"status":       3,
 			"dequeue_time": time.Now(),
 		})
 
@@ -203,11 +195,10 @@ func (s *VideoQueueService) RemoveFromQueue(ctx context.Context, caseID, userID 
 }
 
 func (s *VideoQueueService) CheckAndNotify(ctx context.Context) error {
-	rdb := database.GetRedisClient()
-
-	activeRoomCount, err := rdb.Get(ctx, "video:active_rooms:count").Int()
-	if err != nil {
-		activeRoomCount = 0
+	activeRoomCountStr, _ := cache.Get(ctx, "video:active_rooms:count")
+	activeRoomCount := 0
+	if activeRoomCountStr != "" {
+		fmt.Sscanf(activeRoomCountStr, "%d", &activeRoomCount)
 	}
 
 	if activeRoomCount < 5 {
@@ -227,9 +218,9 @@ func (s *VideoQueueService) CheckAndNotify(ctx context.Context) error {
 
 func (s *VideoQueueService) notifyQueueStatus(phone, name string, position int) {
 	msg := map[string]interface{}{
-		"type":       "video_queue",
-		"channel":    "sms",
-		"phone":      phone,
+		"type":         "video_queue",
+		"channel":      "sms",
+		"phone":        phone,
 		"templateCode": "VIDEO_QUEUE_NOTIFY",
 		"params": map[string]interface{}{
 			"name":     name,
@@ -242,14 +233,14 @@ func (s *VideoQueueService) notifyQueueStatus(phone, name string, position int) 
 
 func (s *VideoQueueService) notifyUserEnter(phone, name string, caseID int64, caseNo string) {
 	msg := map[string]interface{}{
-		"type":       "video_queue",
-		"channel":    "sms",
-		"phone":      phone,
+		"type":         "video_queue",
+		"channel":      "sms",
+		"phone":        phone,
 		"templateCode": "VIDEO_QUEUE_ENTER",
 		"params": map[string]interface{}{
-			"name":    name,
-			"caseNo":  caseNo,
-			"caseId":  caseID,
+			"name":   name,
+			"caseNo": caseNo,
+			"caseId": caseID,
 		},
 		"timestamp": time.Now(),
 	}
@@ -266,9 +257,9 @@ func (s *VideoQueueService) notifyNextInQueue(ctx context.Context) {
 		position := i + 1
 		if position <= 3 {
 			msg := map[string]interface{}{
-				"type":       "video_queue",
-				"channel":    "sms",
-				"phone":      item.PartyPhone,
+				"type":         "video_queue",
+				"channel":      "sms",
+				"phone":        item.PartyPhone,
 				"templateCode": "VIDEO_QUEUE_POSITION",
 				"params": map[string]interface{}{
 					"name":     item.PartyName,
@@ -282,12 +273,10 @@ func (s *VideoQueueService) notifyNextInQueue(ctx context.Context) {
 }
 
 func (s *VideoQueueService) IncrementActiveRoomCount(ctx context.Context) {
-	rdb := database.GetRedisClient()
-	rdb.Incr(ctx, "video:active_rooms:count")
-	rdb.Expire(ctx, "video:active_rooms:count", 24*time.Hour)
+	cache.Incr(ctx, "video:active_rooms:count")
+	cache.Expire(ctx, "video:active_rooms:count", 24*time.Hour)
 }
 
 func (s *VideoQueueService) DecrementActiveRoomCount(ctx context.Context) {
-	rdb := database.GetRedisClient()
-	rdb.Decr(ctx, "video:active_rooms:count")
+	cache.Decr(ctx, "video:active_rooms:count")
 }
