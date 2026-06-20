@@ -961,23 +961,22 @@ func createCallbackForClosedCasesTask() {
 	}
 
 	now := time.Now()
-	sevenDaysAgo := now.AddDate(0, 0, -7)
+	sevenDaysAgo := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
 
 	sql := `SELECT 
 		c.id, c.case_no, c.title, c.status,
 		c.applicant_id, c.applicant_name, c.applicant_phone,
-		c.close_time
+		c.closed_at
 	FROM dispute_case c
 	WHERE c.status = 50 
-		AND c.close_time IS NOT NULL
-		AND c.close_time <= ?
-		AND c.close_time >= ?
+		AND c.closed_at IS NOT NULL
+		AND DATE(c.closed_at) = ?
 		AND c.deleted_at IS NULL
 		AND NOT EXISTS (
 			SELECT 1 FROM callback_record cr
 			WHERE cr.case_id = c.id AND cr.deleted_at IS NULL
 		)
-	ORDER BY c.close_time ASC
+	ORDER BY c.closed_at ASC
 	LIMIT 100`
 
 	type ClosedCase struct {
@@ -987,11 +986,11 @@ func createCallbackForClosedCasesTask() {
 		ApplicantID    int64
 		ApplicantName  string
 		ApplicantPhone string
-		CloseTime      *time.Time
+		ClosedAt       *time.Time
 	}
 
 	var cases []ClosedCase
-	if err := db.Raw(sql, sevenDaysAgo, sevenDaysAgo.AddDate(0, 0, -30)).Scan(&cases).Error; err != nil {
+	if err := db.Raw(sql, sevenDaysAgo.Format("2006-01-02")).Scan(&cases).Error; err != nil {
 		logger.Error("Query closed cases for callback failed", logger.Error(err))
 		return
 	}

@@ -59,6 +59,7 @@ aliyun_voice:
   access_key_secret: "your-access-key-secret"
   region_id: "cn-hangzhou"
   caller_show_number: "057112345678"
+  robot_id: "robot-001"
   tts_code: "TTS_123456789"
   callback_url: "https://your-domain.com/api/v1/public/callback/aliyun-voice"
   endpoint: "dyvmsapi.aliyuncs.com"

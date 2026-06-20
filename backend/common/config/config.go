@@ -216,6 +216,7 @@ type AliyunVoiceConfig struct {
 	AccessKeySecret string `mapstructure:"access_key_secret"`
 	RegionID        string `mapstructure:"region_id"`
 	CallerShowNumber string `mapstructure:"caller_show_number"`
+	RobotId         string `mapstructure:"robot_id"`
 	TtsCode         string `mapstructure:"tts_code"`
 	AsrVocabID      string `mapstructure:"asr_vocab_id"`
 	CallbackURL     string `mapstructure:"callback_url"`
