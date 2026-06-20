@@ -23,6 +23,8 @@ import EsignDetail from './pages/ESign/Detail';
 import CertificateList from './pages/ESign/Certificate';
 import PublicVerify from './pages/ESign/Verify';
 import CallbackList from './pages/Callback/List';
+import SatisfactionAnalysis from './pages/Satisfaction/Analysis';
+import ImprovementList from './pages/Satisfaction/ImprovementList';
 import { getToken } from './utils/auth';
 import { useUserStore } from './stores/user';
 
@@ -112,6 +114,10 @@ const App: React.FC = () => {
             <Route path="certificate" element={<CertificateList />} />
           </Route>
           <Route path="callback" element={<CallbackList />} />
+          <Route path="satisfaction">
+            <Route index element={<SatisfactionAnalysis />} />
+            <Route path="improvement" element={<ImprovementList />} />
+          </Route>
         </Route>
         <Route path="*" element={<Navigate to="/dashboard" replace />} />
       </Routes>

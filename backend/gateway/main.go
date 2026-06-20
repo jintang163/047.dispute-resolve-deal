@@ -90,6 +90,7 @@ func main() {
 	mq.StartConsumers()
 
 	service.InitCallbackService()
+	service.InitSatisfactionService()
 
 	cron.StartCronTasks()
 

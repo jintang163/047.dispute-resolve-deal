@@ -20,6 +20,9 @@ type PerformanceStat struct {
 	AvgSatisfaction   float64   `gorm:"default:0" json:"avgSatisfaction"`
 	Score             float64   `gorm:"default:0" json:"score"`
 	Grade             string    `gorm:"size:10" json:"grade"`
+	DeductionTotal    float64   `gorm:"default:0" json:"deductionTotal"`
+	DeductionCount    int       `gorm:"default:0" json:"deductionCount"`
+	FinalScore        float64   `gorm:"default:0" json:"finalScore"`
 	CreatedAt         time.Time `gorm:"autoCreateTime;index" json:"createdAt"`
 }
 

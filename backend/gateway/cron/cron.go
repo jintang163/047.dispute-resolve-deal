@@ -35,6 +35,7 @@ const (
 	LockExpireSatisfy   = 600 * time.Second
 	LockExpireJudicial  = 600 * time.Second
 	LockExpireCallback  = 600 * time.Second
+	LockExpireSentiment = 600 * time.Second
 )
 
 func StartCronTasks() {
@@ -60,6 +61,7 @@ func StartCronTasks() {
 		addCronTask("0 */30 * * * ?", processRetryCallbacksTask, "process_retry_callbacks")
 		addCronTask("0 0 */6 * * ?", checkCallbackCallResultTask, "check_callback_call_result")
 		addCronTask("0 0 2 * * ?", cleanExpiredRecordingsTask, "clean_expired_recordings")
+		addCronTask("0 */30 * * * ?", satisfactionSentimentAnalysisTask, "satisfaction_sentiment_analysis")
 
 		cronInstance.Start()
 		logger.Info("All cron tasks started", zap.Int("taskCount", len(entryIDs)))
@@ -1158,4 +1160,24 @@ func cleanExpiredRecordingsTask() {
 
 	elapsed := time.Since(startTime)
 	logger.Info("Clean expired recordings task completed", zap.Duration("elapsed", elapsed))
+}
+
+func satisfactionSentimentAnalysisTask() {
+	ctx := context.Background()
+	lockKey := constants.RedisKeyPrefixLock + "cron:satisfaction_sentiment_analysis"
+
+	locked, err := acquireLock(ctx, lockKey, LockExpireSentiment)
+	if err != nil || !locked {
+		logger.Debug("Skip satisfaction sentiment analysis task, lock not acquired")
+		return
+	}
+	defer releaseLock(ctx, lockKey)
+
+	logger.Info("Starting satisfaction sentiment analysis task")
+	startTime := time.Now()
+
+	service.ProcessPendingSatisfactionAnalysis()
+
+	elapsed := time.Since(startTime)
+	logger.Info("Satisfaction sentiment analysis task completed", zap.Duration("elapsed", elapsed))
 }

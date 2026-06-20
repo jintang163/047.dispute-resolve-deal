@@ -244,6 +244,21 @@ func RegisterRoutes(h *app.Hertz) {
 			callback.GET("/case/:caseId", handler.GetCallbacksByCase)
 		}
 
+		satisfaction := userAuth.Group("/satisfaction")
+		{
+			satisfaction.POST("/analyze/:caseId", handler.AnalyzeSatisfactionHandler)
+			satisfaction.GET("/stats", handler.GetSatisfactionSentimentStatsHandler)
+		}
+
+		improvement := userAuth.Group("/improvement")
+		{
+			improvement.GET("", handler.GetImprovementOrderListHandler)
+			improvement.GET("/:id", handler.GetImprovementOrderDetailHandler)
+			improvement.POST("/:id/rectify", handler.SubmitRectificationHandler)
+			improvement.POST("/:id/review", handler.ReviewRectificationHandler)
+			improvement.POST("/:id/close", handler.CloseImprovementOrderHandler)
+		}
+
 		ws := userAuth.Group("/ws")
 		{
 			ws.GET("", handler.HandleWebSocket)

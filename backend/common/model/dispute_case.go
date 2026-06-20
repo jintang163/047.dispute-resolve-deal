@@ -31,6 +31,12 @@ type DisputeCase struct {
 	ClosedAt         *time.Time `json:"closedAt"`
 	SatisfactionScore int       `json:"satisfactionScore"`
 	SatisfactionRemark string    `gorm:"size:500" json:"satisfactionRemark"`
+	SentimentEmotion    string  `gorm:"size:20" json:"sentimentEmotion"`
+	SentimentScoreVal   float64 `json:"sentimentScoreVal"`
+	SentimentConfidence float64 `json:"sentimentConfidence"`
+	SentimentKeywords   string  `gorm:"type:json" json:"sentimentKeywords"`
+	SentimentSummary    string  `gorm:"size:500" json:"sentimentSummary"`
+	SentimentAnalyzedAt *time.Time `json:"sentimentAnalyzedAt"`
 	Longitude        float64    `json:"longitude"`
 	Latitude         float64    `json:"latitude"`
 	Address          string     `gorm:"size:255" json:"address"`

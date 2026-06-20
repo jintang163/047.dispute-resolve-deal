@@ -15,6 +15,8 @@ import {
   FileProtectOutlined,
   HeatMapOutlined,
   PhoneOutlined,
+  BarChartOutlined,
+  ToolOutlined,
 } from '@ant-design/icons';
 
 export interface MenuItem {
@@ -154,6 +156,25 @@ export const menuConfig: MenuItem[] = [
     label: '自动回访管理',
     icon: React.createElement(PhoneOutlined),
     path: '/callback',
+  },
+  {
+    key: 'satisfaction',
+    label: '满意度分析',
+    icon: React.createElement(BarChartOutlined),
+    children: [
+      {
+        key: 'satisfaction-analysis',
+        label: '情感分析统计',
+        icon: React.createElement(BarChartOutlined),
+        path: '/satisfaction',
+      },
+      {
+        key: 'improvement-list',
+        label: '改进工单管理',
+        icon: React.createElement(ToolOutlined),
+        path: '/satisfaction/improvement',
+      },
+    ],
   },
 ];
 
