@@ -13,6 +13,7 @@ import {
   BankOutlined,
   VideoCameraOutlined,
   FileProtectOutlined,
+  HeatMapOutlined,
 } from '@ant-design/icons';
 
 export interface MenuItem {
@@ -29,6 +30,12 @@ export const menuConfig: MenuItem[] = [
     label: '数据概览',
     icon: React.createElement(DashboardOutlined),
     path: '/dashboard',
+  },
+  {
+    key: 'heatmap',
+    label: '纠纷热力图',
+    icon: React.createElement(HeatMapOutlined),
+    path: '/heatmap',
   },
   {
     key: 'dispute',

@@ -22,8 +22,10 @@
     "zustand": "^4.4.7",
     "dayjs": "^1.11.10",
     "@umijs/max": "^4.0.90",
-    "trtc-js-sdk": "^5.0.0",
-    "react-markdown": "^9.0.1"
+    "trtc-sdk-v5": "^5.17.0",
+    "react-markdown": "^9.0.1",
+    "@amap/amap-jsapi-loader": "^1.0.1",
+    "html2canvas": "^1.4.1"
   },
   "devDependencies": {
     "@types/react": "^18.2.43",

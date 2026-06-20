@@ -378,6 +378,141 @@ func GetMediatorRanking(ctx context.Context, c *app.RequestContext) {
 	c.JSON(http.StatusOK, response.Success(rankings))
 }
 
+func GetHeatmapTimeline(ctx context.Context, c *app.RequestContext) {
+	var req HeatmapQueryRequest
+	if err := c.BindAndValidate(&req); err != nil {
+		c.JSON(http.StatusBadRequest, response.BadRequest(err.Error()))
+		return
+	}
+
+	userInfo := middleware.GetUserInfo(c)
+	orgID := req.OrganizationID
+	if orgID == 0 {
+		orgID = userInfo.OrganizationID
+	}
+
+	if req.EndTime == "" {
+		req.EndTime = time.Now().Format("2006-01-02 15:04:05")
+	}
+	if req.StartTime == "" {
+		t, _ := time.Parse("2006-01-02 15:04:05", req.EndTime)
+		req.StartTime = t.AddDate(0, 0, -7).Format("2006-01-02 15:04:05")
+	}
+
+	days := 7
+	endTime, err := time.Parse("2006-01-02 15:04:05", req.EndTime)
+	if err != nil {
+		endTime = time.Now()
+	}
+	startTime, _ := time.Parse("2006-01-02 15:04:05", req.StartTime)
+	daysDiff := int(endTime.Sub(startTime).Hours()/24) + 1
+	if daysDiff > 0 && daysDiff <= 90 {
+		days = daysDiff
+	}
+
+	timeline := make([]map[string]interface{}, 0, days)
+
+	for i := 0; i < days; i++ {
+		dayStart := startTime.AddDate(0, 0, i).Format("2006-01-02") + " 00:00:00"
+		dayEnd := startTime.AddDate(0, 0, i).Format("2006-01-02") + " 23:59:59"
+		dayLabel := startTime.AddDate(0, 0, i).Format("2006-01-02")
+
+		db := database.GetDB().Table("dispute_case dc").
+			Select("dc.latitude, dc.longitude, dc.id, dc.case_no, dc.title, dt.type_name, so.org_name, dc.status, dc.created_at").
+			Joins("LEFT JOIN dispute_type dt ON dc.type_id = dt.id").
+			Joins("LEFT JOIN sys_organization so ON dc.organization_id = so.id").
+			Where("dc.deleted_at IS NULL").
+			Where("dc.latitude IS NOT NULL AND dc.longitude IS NOT NULL").
+			Where("dc.latitude != 0 AND dc.longitude != 0").
+			Where("dc.created_at >= ? AND dc.created_at <= ?", dayStart, dayEnd)
+
+		if orgID > 0 {
+			var childOrgs []int64
+			database.GetDB().Table("sys_organization").
+				Select("id").
+				Where("parent_id = ? OR id = ?", orgID, orgID).
+				Pluck("id", &childOrgs)
+			db = db.Where("dc.organization_id IN ?", childOrgs)
+		}
+		if req.TypeID > 0 {
+			db = db.Where("dc.type_id = ?", req.TypeID)
+		}
+
+		var dayData []map[string]interface{}
+		db.Order("dc.created_at ASC").Find(&dayData)
+
+		for _, item := range dayData {
+			if status, ok := item["status"].(int32); ok {
+				item["status_name"] = constants.CaseStatusMap[int(status)]
+			}
+		}
+
+		timeline = append(timeline, map[string]interface{}{
+			"date":  dayLabel,
+			"count": len(dayData),
+			"items": dayData,
+		})
+	}
+
+	c.JSON(http.StatusOK, response.Success(timeline))
+}
+
+func GetTopCommunities(ctx context.Context, c *app.RequestContext) {
+	var req HeatmapQueryRequest
+	if err := c.BindAndValidate(&req); err != nil {
+		c.JSON(http.StatusBadRequest, response.BadRequest(err.Error()))
+		return
+	}
+
+	userInfo := middleware.GetUserInfo(c)
+	orgID := req.OrganizationID
+	if orgID == 0 {
+		orgID = userInfo.OrganizationID
+	}
+
+	limitStr := c.DefaultQuery("limit", "5")
+	limit, _ := strconv.Atoi(limitStr)
+	if limit <= 0 || limit > 20 {
+		limit = 5
+	}
+
+	db := database.GetDB().Table("dispute_case dc").
+		Select("so.id as org_id, so.org_name, so.longitude, so.latitude, COUNT(*) as case_count").
+		Joins("LEFT JOIN sys_organization so ON dc.organization_id = so.id").
+		Where("dc.deleted_at IS NULL").
+		Where("so.longitude IS NOT NULL AND so.latitude IS NOT NULL")
+
+	if orgID > 0 {
+		var childOrgs []int64
+		database.GetDB().Table("sys_organization").
+			Select("id").
+			Where("parent_id = ? OR id = ?", orgID, orgID).
+			Pluck("id", &childOrgs)
+		db = db.Where("dc.organization_id IN ?", childOrgs)
+	}
+	if req.StartTime != "" {
+		db = db.Where("dc.created_at >= ?", req.StartTime)
+	}
+	if req.EndTime != "" {
+		db = db.Where("dc.created_at <= ?", req.EndTime)
+	}
+	if req.TypeID > 0 {
+		db = db.Where("dc.type_id = ?", req.TypeID)
+	}
+
+	var topList []map[string]interface{}
+	db.Group("so.id, so.org_name, so.longitude, so.latitude").
+		Order("case_count DESC").
+		Limit(limit).
+		Find(&topList)
+
+	for i, item := range topList {
+		item["rank"] = i + 1
+	}
+
+	c.JSON(http.StatusOK, response.Success(topList))
+}
+
 func RefreshStatsCache(ctx context.Context, c *app.RequestContext) {
 	keys := []string{"dashboard:", "heatmap:", "org:stats:"}
 	deleted := 0

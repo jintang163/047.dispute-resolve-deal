@@ -11,6 +11,7 @@ import VideoRoom from './pages/Video/VideoRoom';
 import TodoApproval from './pages/Approval/Todo';
 import DoneApproval from './pages/Approval/Done';
 import Dashboard from './pages/Stats/Dashboard';
+import HeatMap from './pages/HeatMap';
 import UserList from './pages/System/UserList';
 import OrgList from './pages/System/OrgList';
 import Performance from './pages/Performance/Index';
@@ -78,6 +79,7 @@ const App: React.FC = () => {
         >
           <Route index element={<Navigate to="/dashboard" replace />} />
           <Route path="dashboard" element={<Dashboard />} />
+          <Route path="heatmap" element={<HeatMap />} />
           <Route path="dispute">
             <Route index element={<DisputeList />} />
             <Route path="create" element={<DisputeCreate />} />

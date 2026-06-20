@@ -87,6 +87,43 @@ export interface DisputeDetail {
   history?: any[];
 }
 
+export interface HeatmapPoint {
+  latitude: number;
+  longitude: number;
+  id?: number;
+  case_no?: string;
+  title?: string;
+  type_name?: string;
+  org_name?: string;
+  status?: number;
+  status_name?: string;
+  created_at?: string;
+  count?: number;
+  organization_id?: number;
+}
+
+export interface HeatmapTimelineDay {
+  date: string;
+  count: number;
+  items: HeatmapPoint[];
+}
+
+export interface TopCommunity {
+  org_id: number;
+  org_name: string;
+  longitude: number;
+  latitude: number;
+  case_count: number;
+  rank: number;
+}
+
+export interface HeatmapQueryParams {
+  startTime?: string;
+  endTime?: string;
+  typeId?: number;
+  organizationId?: number;
+}
+
 export const disputeService = {
   getList: (params?: DisputeListParams) => {
     return request.get<DisputeListResponse>('/dispute/list', { params });
@@ -126,5 +163,17 @@ export const disputeService = {
 
   urge: (id: string, reason?: string) => {
     return request.post(`/dispute/${id}/urge`, { reason });
+  },
+
+  getHeatmapData: (params?: HeatmapQueryParams) => {
+    return request.get<HeatmapPoint[]>('/stats/heatmap', { params });
+  },
+
+  getHeatmapTimeline: (params?: HeatmapQueryParams) => {
+    return request.get<HeatmapTimelineDay[]>('/stats/heatmap/timeline', { params });
+  },
+
+  getTopCommunities: (params?: HeatmapQueryParams & { limit?: number }) => {
+    return request.get<TopCommunity[]>('/stats/heatmap/top-communities', { params });
   },
 };
