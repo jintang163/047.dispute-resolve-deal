@@ -529,7 +529,120 @@ func GetMediatorList(ctx context.Context, c *app.RequestContext) {
 	var list []map[string]interface{}
 	db.Order("su.id ASC").Find(&list)
 
+	mediatorIDs := make([]int64, 0, len(list))
+	mediatorIDMap := make(map[int64]map[string]interface{}, len(list))
+	for _, item := range list {
+		var id int64
+		switch v := item["id"].(type) {
+		case int64:
+			id = v
+		case int:
+			id = int64(v)
+		case float64:
+			id = int64(v)
+		}
+		if id > 0 {
+			mediatorIDs = append(mediatorIDs, id)
+			mediatorIDMap[id] = item
+		}
+	}
+
+	if len(mediatorIDs) > 0 {
+		var loadResults []struct {
+			MediatorID  int64 `gorm:"column:mediator_id"`
+			PendingCount int64 `gorm:"column:pending_count"`
+		}
+		database.GetDB().Table("dispute_case").
+			Select("mediator_id, COUNT(*) as pending_count").
+			Where("mediator_id IN ?", mediatorIDs).
+			Where("status < ? AND deleted_at IS NULL", constants.CaseStatusClosed).
+			Group("mediator_id").
+			Find(&loadResults)
+
+		for _, r := range loadResults {
+			if item, ok := mediatorIDMap[r.MediatorID]; ok {
+				item["pending_case_count"] = r.PendingCount
+				if r.PendingCount >= 10 {
+					item["is_high_load"] = true
+				} else {
+					item["is_high_load"] = false
+				}
+			}
+		}
+		for _, item := range list {
+			if _, exists := item["pending_case_count"]; !exists {
+				item["pending_case_count"] = int64(0)
+				item["is_high_load"] = false
+			}
+		}
+	}
+
 	c.JSON(http.StatusOK, response.Success(list))
+}
+
+func GetMediatorLoad(ctx context.Context, c *app.RequestContext) {
+	idStr := c.Param("id")
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, response.BadRequest("invalid mediator id"))
+		return
+	}
+
+	var mediator struct {
+		ID             int64  `gorm:"column:id"`
+		RealName       string `gorm:"column:real_name"`
+		Phone          string `gorm:"column:phone"`
+		OrganizationID int64  `gorm:"column:organization_id"`
+		Role           int32  `gorm:"column:role"`
+		Status         int32  `gorm:"column:status"`
+	}
+	result := database.GetDB().Table("sys_user").
+		Where("id = ? AND deleted_at IS NULL", id).
+		First(&mediator)
+	if result.Error != nil {
+		c.JSON(http.StatusNotFound, response.NotFound("调解员不存在"))
+		return
+	}
+	if mediator.Status != 1 {
+		c.JSON(http.StatusBadRequest, response.BadRequest("该调解员已被禁用"))
+		return
+	}
+	if mediator.Role != constants.RoleMediator {
+		c.JSON(http.StatusBadRequest, response.BadRequest("该用户不是调解员角色"))
+		return
+	}
+
+	var pendingCount int64
+	database.GetDB().Table("dispute_case").
+		Where("mediator_id = ? AND status < ? AND deleted_at IS NULL", id, constants.CaseStatusClosed).
+		Count(&pendingCount)
+
+	var mediatingCount int64
+	database.GetDB().Table("dispute_case").
+		Where("mediator_id = ? AND status = ? AND deleted_at IS NULL", id, constants.CaseStatusMediating).
+		Count(&mediatingCount)
+
+	var pendingAssignCount int64
+	database.GetDB().Table("dispute_case").
+		Where("mediator_id = ? AND status = ? AND deleted_at IS NULL", id, constants.CaseStatusPending).
+		Count(&pendingAssignCount)
+
+	isHighLoad := pendingCount >= 10
+	suggestion := ""
+	if isHighLoad {
+		suggestion = "该调解员负载较高，建议选择其他人"
+	}
+
+	c.JSON(http.StatusOK, response.Success(map[string]interface{}{
+		"mediatorId":          mediator.ID,
+		"mediatorName":        mediator.RealName,
+		"pendingCaseCount":    pendingCount,
+		"mediatingCaseCount":  mediatingCount,
+		"pendingAssignCount":  pendingAssignCount,
+		"isHighLoad":          isHighLoad,
+		"loadThreshold":       10,
+		"suggestion":          suggestion,
+	}))
 }
 
 func GetOperationLogList(ctx context.Context, c *app.RequestContext) {

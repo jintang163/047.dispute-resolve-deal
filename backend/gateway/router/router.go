@@ -77,6 +77,9 @@ func RegisterRoutes(h *app.Hertz) {
 			dispute.GET("/:id/history", handler.GetDisputeHistory)
 			dispute.GET("/:id/escalations", handler.GetCaseEscalationListHandler)
 
+			dispute.GET("/mediators", handler.GetMediatorList)
+			dispute.GET("/mediators/:id/load", handler.GetMediatorLoad)
+
 			evidence := dispute.Group("/:id/evidence")
 			{
 				evidence.POST("", handler.UploadEvidence)
@@ -304,6 +307,7 @@ func RegisterRoutes(h *app.Hertz) {
 			mediator := system.Group("/mediator")
 			{
 				mediator.GET("", handler.GetMediatorList)
+				mediator.GET("/:id/load", handler.GetMediatorLoad)
 			}
 
 			log := system.Group("/log")

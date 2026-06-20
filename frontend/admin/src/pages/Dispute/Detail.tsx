@@ -12,6 +12,10 @@ import {
   Divider,
   App,
   Drawer,
+  Modal,
+  List,
+  Avatar,
+  Alert,
 } from 'antd';
 import {
   ArrowLeftOutlined,
@@ -22,10 +26,13 @@ import {
   SafetyCertificateOutlined,
   RobotOutlined,
   FileTextOutlined,
+  UserOutlined,
+  TeamOutlined,
+  WarningOutlined,
 } from '@ant-design/icons';
 import { useNavigate, useParams } from 'react-router-dom';
 import { ProDescriptions } from '@ant-design/pro-components';
-import { disputeService, DisputeDetail } from '../../services/dispute';
+import { disputeService, DisputeDetail, MediatorOption } from '../../services/dispute';
 import ProtocolGenerator from '../Mediation/ProtocolGenerator';
 import dayjs from 'dayjs';
 
@@ -94,10 +101,16 @@ const getTimelineColor = (status: string) => {
 const DisputeDetail: React.FC = () => {
   const navigate = useNavigate();
   const { id } = useParams<{ id: string }>();
-  const { message } = App.useApp();
+  const { message, modal } = App.useApp();
   const [loading, setLoading] = useState(false);
   const [detail, setDetail] = useState<DisputeDetail | null>(null);
   const [protocolDrawerOpen, setProtocolDrawerOpen] = useState(false);
+
+  const [assignModalOpen, setAssignModalOpen] = useState(false);
+  const [mediators, setMediators] = useState<MediatorOption[]>([]);
+  const [mediatorsLoading, setMediatorsLoading] = useState(false);
+  const [selectedMediator, setSelectedMediator] = useState<MediatorOption | null>(null);
+  const [assigning, setAssigning] = useState(false);
 
   useEffect(() => {
     if (id) {
@@ -115,6 +128,68 @@ const DisputeDetail: React.FC = () => {
       message.error(error.message || '获取案件详情失败');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const openAssignModal = async () => {
+    setAssignModalOpen(true);
+    setSelectedMediator(null);
+    setMediatorsLoading(true);
+    try {
+      const res = await disputeService.getMediatorsForAssign();
+      const data: any = (res as any)?.data ?? res;
+      const list: MediatorOption[] = Array.isArray(data) ? data : data.list || [];
+      const normalized = list.map((m: any) => ({
+        ...m,
+        pendingCaseCount: m.pending_case_count ?? m.pendingCaseCount ?? 0,
+        isHighLoad: m.is_high_load ?? m.isHighLoad ?? false,
+      }));
+      setMediators(normalized.sort((a, b) => (a.pendingCaseCount || 0) - (b.pendingCaseCount || 0)));
+    } catch (error: any) {
+      message.error(error.message || '获取调解员列表失败');
+    } finally {
+      setMediatorsLoading(false);
+    }
+  };
+
+  const handleSelectMediator = (mediator: MediatorOption) => {
+    if (mediator.isHighLoad) {
+      modal.warning({
+        title: '调解员负载较高',
+        icon: <WarningOutlined style={{ color: '#faad14' }} />,
+        content: (
+          <div>
+            <p>调解员 <strong>{mediator.realName}</strong> 当前待办案件为 <strong style={{ color: '#ff4d4f' }}>{mediator.pendingCaseCount}</strong> 件，超过推荐上限 10 件。</p>
+            <p style={{ marginTop: 8 }}>该调解员负载较高，建议选择其他人，避免任务分配不均导致案件积压。</p>
+            <p style={{ marginTop: 8, color: '#999', fontSize: 12 }}>是否仍确认选择该调解员？</p>
+          </div>
+        ),
+        okText: '确认选择',
+        cancelText: '重新选择',
+        onOk: () => {
+          setSelectedMediator(mediator);
+        },
+      });
+    } else {
+      setSelectedMediator(mediator);
+    }
+  };
+
+  const handleConfirmAssign = async () => {
+    if (!selectedMediator) {
+      message.warning('请选择调解员');
+      return;
+    }
+    setAssigning(true);
+    try {
+      await disputeService.assignMediator(id!, String(selectedMediator.id));
+      message.success('分派成功');
+      setAssignModalOpen(false);
+      fetchDetail();
+    } catch (error: any) {
+      message.error(error.message || '分派失败');
+    } finally {
+      setAssigning(false);
     }
   };
 
@@ -136,7 +211,9 @@ const DisputeDetail: React.FC = () => {
               >
                 AI生成协议
               </Button>
-              <Button type="primary">分配调解员</Button>
+              <Button type="primary" icon={<TeamOutlined />} onClick={openAssignModal}>
+                分配调解员
+              </Button>
             </Space>
           }
           title={
@@ -270,6 +347,120 @@ const DisputeDetail: React.FC = () => {
       >
         {id && <ProtocolGenerator caseId={id} onClose={() => setProtocolDrawerOpen(false)} />}
       </Drawer>
+
+      <Modal
+        title={
+          <Space>
+            <TeamOutlined />
+            <span>分配调解员</span>
+          </Space>
+        }
+        width={760}
+        open={assignModalOpen}
+        onCancel={() => setAssignModalOpen(false)}
+        onOk={handleConfirmAssign}
+        okText="确认分派"
+        cancelText="取消"
+        confirmLoading={assigning}
+        okButtonProps={{ disabled: !selectedMediator }}
+        destroyOnClose
+      >
+        <Alert
+          type="info"
+          showIcon
+          style={{ marginBottom: 16 }}
+          message="负载均衡提示"
+          description={
+            <span>
+              系统实时显示各调解员当前待办案件数量。待办超过 <strong>10 件</strong> 的调解员将高亮警示，
+              建议优先选择负载较低的调解员，避免任务分配不均。
+            </span>
+          }
+        />
+        {selectedMediator && (
+          <Alert
+            type={selectedMediator.isHighLoad ? 'warning' : 'success'}
+            showIcon
+            style={{ marginBottom: 16 }}
+            message={
+              <Space>
+                <span>已选择：</span>
+                <Avatar size="small" icon={<UserOutlined />} src={selectedMediator.avatar} />
+                <strong>{selectedMediator.realName}</strong>
+                <Tag color={selectedMediator.isHighLoad ? 'red' : 'green'}>
+                  待办 {selectedMediator.pendingCaseCount || 0} 件
+                </Tag>
+                {selectedMediator.orgName && <Tag color="blue">{selectedMediator.orgName}</Tag>}
+              </Space>
+            }
+          />
+        )}
+        <Spin spinning={mediatorsLoading}>
+          <List
+            dataSource={mediators}
+            grid={{ gutter: 12, xs: 1, sm: 2, md: 2, lg: 2, xl: 3, xxl: 3 }}
+            renderItem={(mediator) => {
+              const isSelected = selectedMediator?.id === mediator.id;
+              const highLoad = !!mediator.isHighLoad;
+              return (
+                <List.Item
+                  onClick={() => handleSelectMediator(mediator)}
+                  style={{ cursor: 'pointer' }}
+                >
+                  <Card
+                    size="small"
+                    style={{
+                      borderWidth: 2,
+                      borderColor: isSelected ? '#1677ff' : highLoad ? '#ff4d4f' : '#f0f0f0',
+                      boxShadow: isSelected ? '0 2px 8px rgba(22,119,255,0.25)' : 'none',
+                      transition: 'all 0.2s',
+                    }}
+                    hoverable
+                    bodyStyle={{ padding: '12px 14px' }}
+                  >
+                    <Space align="start" style={{ width: '100%' }}>
+                      <Avatar size={40} icon={<UserOutlined />} src={mediator.avatar} />
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <Space style={{ marginBottom: 4 }} wrap>
+                          <strong>{mediator.realName}</strong>
+                          {highLoad ? (
+                            <Tag color="red" icon={<WarningOutlined />}>
+                              高负载
+                            </Tag>
+                          ) : (
+                            <Tag color="green">正常</Tag>
+                          )}
+                        </Space>
+                        <Space size={8} style={{ marginBottom: 4 }} wrap>
+                          <span style={{ color: '#666', fontSize: 12 }}>
+                            <UserOutlined style={{ marginRight: 4 }} />
+                            待办 <strong style={{ color: highLoad ? '#ff4d4f' : '#1677ff' }}>
+                              {mediator.pendingCaseCount || 0}
+                            </strong> 件
+                          </span>
+                          {mediator.phone && (
+                            <span style={{ color: '#999', fontSize: 12 }}>{mediator.phone}</span>
+                          )}
+                        </Space>
+                        {mediator.specialty && (
+                          <div style={{ color: '#888', fontSize: 12 }}>
+                            专长：{mediator.specialty}
+                          </div>
+                        )}
+                        {mediator.orgName && (
+                          <div style={{ color: '#999', fontSize: 12, marginTop: 2 }}>
+                            {mediator.orgName}
+                          </div>
+                        )}
+                      </div>
+                    </Space>
+                  </Card>
+                </List.Item>
+              );
+            }}
+          />
+        </Spin>
+      </Modal>
     </Spin>
   );
 };

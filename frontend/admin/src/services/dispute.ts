@@ -196,6 +196,30 @@ export interface DrilldownResponse {
   list: DrilldownCase[];
 }
 
+export interface MediatorOption {
+  id: string | number;
+  realName: string;
+  phone?: string;
+  avatar?: string;
+  specialty?: string;
+  orgName?: string;
+  pendingCaseCount?: number;
+  mediatingCaseCount?: number;
+  pendingAssignCount?: number;
+  isHighLoad?: boolean;
+}
+
+export interface MediatorLoadInfo {
+  mediatorId: number;
+  mediatorName: string;
+  pendingCaseCount: number;
+  mediatingCaseCount: number;
+  pendingAssignCount: number;
+  isHighLoad: boolean;
+  loadThreshold: number;
+  suggestion?: string;
+}
+
 export interface DrilldownParams extends HeatmapQueryParams {
   westLng?: number;
   southLat?: number;
@@ -319,5 +343,15 @@ export const disputeService = {
       typeId: typeId || 0,
       maxKeywords: 8,
     });
+  },
+
+  getMediatorsForAssign: (specialty?: string) => {
+    const params: any = {};
+    if (specialty) params.specialty = specialty;
+    return request.get<MediatorOption[]>('/dispute/mediators', { params });
+  },
+
+  getMediatorLoad: (mediatorId: string | number) => {
+    return request.get<MediatorLoadInfo>(`/dispute/mediators/${mediatorId}/load`);
   },
 };
