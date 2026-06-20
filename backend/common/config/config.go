@@ -24,6 +24,8 @@ type Config struct {
 	Blockchain   BlockchainConfig   `mapstructure:"blockchain"`
 	Services     ServicesConfig     `mapstructure:"services"`
 	ServicePorts ServicePortsConfig `mapstructure:"service-ports"`
+	Amap         AmapConfig         `mapstructure:"amap"`
+	Spatial      SpatialConfig      `mapstructure:"spatial"`
 }
 
 type ServicesConfig struct {
@@ -189,4 +191,21 @@ var (
 
 func GetConfig() *Config {
 	return config
+}
+
+type AmapConfig struct {
+	WebKey         string `mapstructure:"web_key"`
+	WebServiceKey  string `mapstructure:"web_service_key"`
+	SecurityCode   string `mapstructure:"security_code"`
+	DefaultCity    string `mapstructure:"default_city"`
+	DefaultLng     string `mapstructure:"default_lng"`
+	DefaultLat     string `mapstructure:"default_lat"`
+	DefaultZoom    int    `mapstructure:"default_zoom"`
+}
+
+type SpatialConfig struct {
+	GridLevel          int     `mapstructure:"grid_level"`
+	ClusterRadiusMeters float64 `mapstructure:"cluster_radius_meters"`
+	UseGeohashPrefix   int     `mapstructure:"use_geohash_prefix"`
+	UseSpatialIndex    bool    `mapstructure:"use_spatial_index"`
 }

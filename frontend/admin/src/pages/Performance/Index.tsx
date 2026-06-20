@@ -557,7 +557,7 @@ const Performance: React.FC = () => {
             <Tag color="green"><ArrowUpOutlined /> 优秀: ≥90分</Tag>
             <Tag color="blue"><ArrowUpOutlined /> 良好: 75-89分</Tag>
             <Tag color="orange"><ClockCircleOutlined /> 合格: 60-74分</Tag>
-            <Tag color="red"><ArrowDownOutlined /> 待改进: <60分</Tag>
+            <Tag color="red"><ArrowDownOutlined /> 待改进: {'<60分'}</Tag>
           </Space>
         }
       >

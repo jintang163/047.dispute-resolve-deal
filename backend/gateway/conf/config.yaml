@@ -85,3 +85,18 @@ court:
   api_app_id: "court-app-001"
   api_secret: "court-secret-2024"
   api_public_key: "-----BEGIN PUBLIC KEY-----\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA\n-----END PUBLIC KEY-----"
+
+amap:
+  web_key: "YOUR_AMAP_WEB_JS_KEY"
+  web_service_key: "YOUR_AMAP_WEB_SERVICE_KEY"
+  security_code: "YOUR_AMAP_SECURITY_CODE"
+  default_city: "北京市"
+  default_lng: "116.397428"
+  default_lat: "39.90923"
+  default_zoom: 12
+
+spatial:
+  grid_level: 6
+  cluster_radius_meters: 500.0
+  use_geohash_prefix: 5
+  use_spatial_index: true

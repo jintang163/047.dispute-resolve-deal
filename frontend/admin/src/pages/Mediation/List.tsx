@@ -140,6 +140,7 @@ const MediationList: React.FC = () => {
   ];
 
   return (
+    <>
     <ProTable<MediationRecord>
       columns={columns}
       actionRef={actionRef}
@@ -226,6 +227,7 @@ const MediationList: React.FC = () => {
           />
         )}
       </Drawer>
+    </>
   );
 };
 

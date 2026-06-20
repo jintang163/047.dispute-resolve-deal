@@ -109,12 +109,70 @@ export interface HeatmapTimelineDay {
 }
 
 export interface TopCommunity {
-  org_id: number;
-  org_name: string;
-  longitude: number;
-  latitude: number;
+  cluster_id?: string;
+  org_id?: number;
+  org_name?: string;
+  cluster_name: string;
+  longitude: string | number;
+  latitude: string | number;
   case_count: number;
   rank: number;
+  bbox?: {
+    west: number;
+    south: number;
+    east: number;
+    north: number;
+  };
+  radius_meters?: number;
+}
+
+export interface DrilldownCase {
+  id: number;
+  case_no: string;
+  title: string;
+  applicant_name?: string;
+  respondent_name?: string;
+  event_address?: string;
+  latitude: number;
+  longitude: number;
+  status: number;
+  status_name?: string;
+  created_at: string;
+  type_name?: string;
+  org_name?: string;
+}
+
+export interface DrilldownResponse {
+  total: number;
+  page: number;
+  pageSize: number;
+  list: DrilldownCase[];
+}
+
+export interface DrilldownParams extends HeatmapQueryParams {
+  westLng?: number;
+  southLat?: number;
+  eastLng?: number;
+  northLat?: number;
+  centerLng?: number;
+  centerLat?: number;
+  radiusMeters?: number;
+  gridKey?: string;
+  clusterId?: string;
+  page?: number;
+  pageSize?: number;
+}
+
+export interface AmapConfig {
+  web_key: string;
+  security_code: string;
+  default_city: string;
+  default_lng: string;
+  default_lat: string;
+  default_zoom: number;
+  cluster_radius: number;
+  grid_level: number;
+  use_spatial: boolean;
 }
 
 export interface HeatmapQueryParams {
@@ -122,6 +180,7 @@ export interface HeatmapQueryParams {
   endTime?: string;
   typeId?: number;
   organizationId?: number;
+  useSpatial?: boolean;
 }
 
 export const disputeService = {
@@ -175,5 +234,13 @@ export const disputeService = {
 
   getTopCommunities: (params?: HeatmapQueryParams & { limit?: number }) => {
     return request.get<TopCommunity[]>('/stats/heatmap/top-communities', { params });
+  },
+
+  getHeatmapDrilldown: (params?: DrilldownParams) => {
+    return request.get<DrilldownResponse>('/stats/heatmap/drilldown', { params });
+  },
+
+  getAmapConfig: () => {
+    return request.get<AmapConfig>('/stats/heatmap/amap-config');
   },
 };

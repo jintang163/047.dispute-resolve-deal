@@ -4,11 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/dispute-resolve/common/cache"
+	"github.com/dispute-resolve/common/config"
 	"github.com/dispute-resolve/common/constants"
 	"github.com/dispute-resolve/common/database"
 	"github.com/dispute-resolve/common/logger"
@@ -23,6 +26,25 @@ type HeatmapQueryRequest struct {
 	EndTime        string `form:"endTime"`
 	TypeID         int64  `form:"typeId"`
 	OrganizationID int64  `form:"organizationId"`
+	UseSpatial     bool   `form:"useSpatial"`
+}
+
+type BBoxDrilldownRequest struct {
+	WestLng        float64 `form:"westLng" vd:"gte:-180"`
+	SouthLat       float64 `form:"southLat" vd:"gte:-90"`
+	EastLng        float64 `form:"eastLng" vd:"lte:180"`
+	NorthLat       float64 `form:"northLat" vd:"lte:90"`
+	CenterLng      float64 `form:"centerLng"`
+	CenterLat      float64 `form:"centerLat"`
+	RadiusMeters   float64 `form:"radiusMeters"`
+	StartTime      string  `form:"startTime"`
+	EndTime        string  `form:"endTime"`
+	TypeID         int64   `form:"typeId"`
+	OrganizationID int64   `form:"organizationId"`
+	GridKey        string  `form:"gridKey"`
+	ClusterID      string  `form:"clusterId"`
+	Page           int     `form:"page"`
+	PageSize       int     `form:"pageSize"`
 }
 
 type DashboardStatsRequest struct {
@@ -378,6 +400,21 @@ func GetMediatorRanking(ctx context.Context, c *app.RequestContext) {
 	c.JSON(http.StatusOK, response.Success(rankings))
 }
 
+func applyOrgFilter(query interface{ Where(query interface{}, args ...interface{}) interface{} }, orgID int64) interface{} {
+	if orgID <= 0 {
+		return query
+	}
+	var childOrgs []int64
+	database.GetDB().Table("sys_organization").
+		Select("id").
+		Where("parent_id = ? OR id = ?", orgID, orgID).
+		Pluck("id", &childOrgs)
+	if len(childOrgs) > 0 {
+		return query.Where("dc.organization_id IN ?", childOrgs)
+	}
+	return query
+}
+
 func GetHeatmapTimeline(ctx context.Context, c *app.RequestContext) {
 	var req HeatmapQueryRequest
 	if err := c.BindAndValidate(&req); err != nil {
@@ -399,20 +436,41 @@ func GetHeatmapTimeline(ctx context.Context, c *app.RequestContext) {
 		req.StartTime = t.AddDate(0, 0, -7).Format("2006-01-02 15:04:05")
 	}
 
-	days := 7
 	endTime, err := time.Parse("2006-01-02 15:04:05", req.EndTime)
 	if err != nil {
 		endTime = time.Now()
 	}
 	startTime, _ := time.Parse("2006-01-02 15:04:05", req.StartTime)
 	daysDiff := int(endTime.Sub(startTime).Hours()/24) + 1
-	if daysDiff > 0 && daysDiff <= 90 {
-		days = daysDiff
+	if daysDiff <= 0 || daysDiff > 90 {
+		daysDiff = 7
+		if endTime.Before(startTime) {
+			startTime = endTime.AddDate(0, 0, -6)
+		}
 	}
 
-	timeline := make([]map[string]interface{}, 0, days)
+	cacheKey := fmt.Sprintf("heatmap:timeline:%d:%s:%s:%d:%t", orgID, req.StartTime, req.EndTime, req.TypeID, req.UseSpatial)
+	cachedData, err := cache.Get(ctx, cacheKey)
+	if err == nil && cachedData != "" {
+		var data []map[string]interface{}
+		json.Unmarshal([]byte(cachedData), &data)
+		c.JSON(http.StatusOK, response.Success(data))
+		return
+	}
 
-	for i := 0; i < days; i++ {
+	spatialConfig := config.GetConfig().Spatial
+	useSpatial := req.UseSpatial && spatialConfig.UseSpatialIndex
+	var childOrgs []int64
+	if orgID > 0 {
+		database.GetDB().Table("sys_organization").
+			Select("id").
+			Where("parent_id = ? OR id = ?", orgID, orgID).
+			Pluck("id", &childOrgs)
+	}
+
+	timeline := make([]map[string]interface{}, 0, daysDiff)
+
+	for i := 0; i < daysDiff; i++ {
 		dayStart := startTime.AddDate(0, 0, i).Format("2006-01-02") + " 00:00:00"
 		dayEnd := startTime.AddDate(0, 0, i).Format("2006-01-02") + " 23:59:59"
 		dayLabel := startTime.AddDate(0, 0, i).Format("2006-01-02")
@@ -422,16 +480,16 @@ func GetHeatmapTimeline(ctx context.Context, c *app.RequestContext) {
 			Joins("LEFT JOIN dispute_type dt ON dc.type_id = dt.id").
 			Joins("LEFT JOIN sys_organization so ON dc.organization_id = so.id").
 			Where("dc.deleted_at IS NULL").
-			Where("dc.latitude IS NOT NULL AND dc.longitude IS NOT NULL").
-			Where("dc.latitude != 0 AND dc.longitude != 0").
 			Where("dc.created_at >= ? AND dc.created_at <= ?", dayStart, dayEnd)
 
-		if orgID > 0 {
-			var childOrgs []int64
-			database.GetDB().Table("sys_organization").
-				Select("id").
-				Where("parent_id = ? OR id = ?", orgID, orgID).
-				Pluck("id", &childOrgs)
+		if useSpatial {
+			db = db.Where("dc.geom IS NOT NULL")
+		} else {
+			db = db.Where("dc.latitude IS NOT NULL AND dc.longitude IS NOT NULL").
+				Where("dc.latitude != 0 AND dc.longitude != 0")
+		}
+
+		if len(childOrgs) > 0 {
 			db = db.Where("dc.organization_id IN ?", childOrgs)
 		}
 		if req.TypeID > 0 {
@@ -444,6 +502,10 @@ func GetHeatmapTimeline(ctx context.Context, c *app.RequestContext) {
 		for _, item := range dayData {
 			if status, ok := item["status"].(int32); ok {
 				item["status_name"] = constants.CaseStatusMap[int(status)]
+			} else if status, ok := item["status"].(int64); ok {
+				item["status_name"] = constants.CaseStatusMap[int(status)]
+			} else if status, ok := item["status"].(int); ok {
+				item["status_name"] = constants.CaseStatusMap[status]
 			}
 		}
 
@@ -453,6 +515,9 @@ func GetHeatmapTimeline(ctx context.Context, c *app.RequestContext) {
 			"items": dayData,
 		})
 	}
+
+	jsonData, _ := json.Marshal(timeline)
+	cache.Set(ctx, cacheKey, string(jsonData), 300)
 
 	c.JSON(http.StatusOK, response.Success(timeline))
 }
@@ -476,18 +541,47 @@ func GetTopCommunities(ctx context.Context, c *app.RequestContext) {
 		limit = 5
 	}
 
-	db := database.GetDB().Table("dispute_case dc").
-		Select("so.id as org_id, so.org_name, so.longitude, so.latitude, COUNT(*) as case_count").
-		Joins("LEFT JOIN sys_organization so ON dc.organization_id = so.id").
-		Where("dc.deleted_at IS NULL").
-		Where("so.longitude IS NOT NULL AND so.latitude IS NOT NULL")
+	cacheKey := fmt.Sprintf("heatmap:topcluster:%d:%s:%s:%d:%d", orgID, req.StartTime, req.EndTime, req.TypeID, limit)
+	cachedData, err := cache.Get(ctx, cacheKey)
+	if err == nil && cachedData != "" {
+		var data []map[string]interface{}
+		json.Unmarshal([]byte(cachedData), &data)
+		c.JSON(http.StatusOK, response.Success(data))
+		return
+	}
 
+	spatialConfig := config.GetConfig().Spatial
+	geoPrefix := spatialConfig.UseGeohashPrefix
+	if geoPrefix <= 2 || geoPrefix > 8 {
+		geoPrefix = 5
+	}
+
+	var childOrgs []int64
 	if orgID > 0 {
-		var childOrgs []int64
 		database.GetDB().Table("sys_organization").
 			Select("id").
 			Where("parent_id = ? OR id = ?", orgID, orgID).
 			Pluck("id", &childOrgs)
+	}
+
+	db := database.GetDB().Table("dispute_case dc").
+		Select(fmt.Sprintf(
+			"CAST(AVG(dc.longitude) AS DECIMAL(12,8)) as longitude, "+
+				"CAST(AVG(dc.latitude) AS DECIMAL(12,8)) as latitude, "+
+				"COUNT(*) as case_count, "+
+				"LEFT(ST_GeoHash(dc.geom, 8), %d) as geo_key, "+
+				"MIN(dc.longitude) as min_lng, "+
+				"MIN(dc.latitude) as min_lat, "+
+				"MAX(dc.longitude) as max_lng, "+
+				"MAX(dc.latitude) as max_lat",
+			geoPrefix)).
+		Joins("LEFT JOIN dispute_type dt ON dc.type_id = dt.id").
+		Where("dc.deleted_at IS NULL").
+		Where("dc.geom IS NOT NULL").
+		Where("dc.longitude IS NOT NULL AND dc.latitude IS NOT NULL").
+		Where("dc.longitude != 0 AND dc.latitude != 0")
+
+	if len(childOrgs) > 0 {
 		db = db.Where("dc.organization_id IN ?", childOrgs)
 	}
 	if req.StartTime != "" {
@@ -500,17 +594,271 @@ func GetTopCommunities(ctx context.Context, c *app.RequestContext) {
 		db = db.Where("dc.type_id = ?", req.TypeID)
 	}
 
-	var topList []map[string]interface{}
-	db.Group("so.id, so.org_name, so.longitude, so.latitude").
+	var geoGroups []map[string]interface{}
+	db.Group("geo_key").
 		Order("case_count DESC").
-		Limit(limit).
-		Find(&topList)
+		Limit(limit * 2).
+		Find(&geoGroups)
 
-	for i, item := range topList {
-		item["rank"] = i + 1
+	clusterRadius := spatialConfig.ClusterRadiusMeters
+	if clusterRadius <= 0 {
+		clusterRadius = 500.0
 	}
 
-	c.JSON(http.StatusOK, response.Success(topList))
+	type cluster struct {
+		lngSum, latSum float64
+		count          int64
+		caseIDs        []int64
+		minLng, minLat float64
+		maxLng, maxLat float64
+	}
+
+	finalClusters := make([]*cluster, 0)
+
+	for _, g := range geoGroups {
+		lng, _ := strconv.ParseFloat(fmt.Sprintf("%v", g["longitude"]), 64)
+		lat, _ := strconv.ParseFloat(fmt.Sprintf("%v", g["latitude"]), 64)
+		count, _ := g["case_count"].(int64)
+		minLng, _ := strconv.ParseFloat(fmt.Sprintf("%v", g["min_lng"]), 64)
+		minLat, _ := strconv.ParseFloat(fmt.Sprintf("%v", g["min_lat"]), 64)
+		maxLng, _ := strconv.ParseFloat(fmt.Sprintf("%v", g["max_lng"]), 64)
+		maxLat, _ := strconv.ParseFloat(fmt.Sprintf("%v", g["max_lat"]), 64)
+
+		merged := false
+		for i, fc := range finalClusters {
+			centerLng := fc.lngSum / float64(fc.count)
+			centerLat := fc.latSum / float64(fc.count)
+			dist := haversineDistance(lng, lat, centerLng, centerLat)
+			if dist <= clusterRadius {
+				fc.lngSum += lng * float64(count)
+				fc.latSum += lat * float64(count)
+				fc.count += count
+				fc.minLng = math.Min(fc.minLng, minLng)
+				fc.minLat = math.Min(fc.minLat, minLat)
+				fc.maxLng = math.Max(fc.maxLng, maxLng)
+				fc.maxLat = math.Max(fc.maxLat, maxLat)
+				merged = true
+				_ = i
+				break
+			}
+		}
+		if !merged {
+			finalClusters = append(finalClusters, &cluster{
+				lngSum:  lng * float64(count),
+				latSum:  lat * float64(count),
+				count:   count,
+				minLng:  minLng,
+				minLat:  minLat,
+				maxLng:  maxLng,
+				maxLat:  maxLat,
+				caseIDs: []int64{},
+			})
+		}
+	}
+
+	resultList := make([]map[string]interface{}, 0, len(finalClusters))
+	for i, fc := range finalClusters {
+		if i >= limit {
+			break
+		}
+		centerLng := fc.lngSum / float64(fc.count)
+		centerLat := fc.latSum / float64(fc.count)
+
+		clusterName := fmt.Sprintf("热点区域%d", i+1)
+		var orgNameList []string
+		database.GetDB().Table("dispute_case dc").
+			Select("so.org_name").
+			Joins("LEFT JOIN sys_organization so ON dc.organization_id = so.id").
+			Where("ST_Contains(ST_MakeEnvelope(POINT(?, ?), POINT(?, ?)), dc.geom)",
+				fc.minLng, fc.minLat, fc.maxLng, fc.maxLat).
+			Group("so.org_name").
+			Order("COUNT(*) DESC").
+			Limit(2).
+			Pluck("org_name", &orgNameList)
+		if len(orgNameList) > 0 {
+			clusterName = strings.Join(orgNameList, "-") + "片区"
+		}
+
+		resultList = append(resultList, map[string]interface{}{
+			"cluster_id": fmt.Sprintf("CLS_%d", i+1),
+			"rank":       i + 1,
+			"cluster_name": clusterName,
+			"longitude":   fmt.Sprintf("%.8f", centerLng),
+			"latitude":    fmt.Sprintf("%.8f", centerLat),
+			"case_count":  fc.count,
+			"bbox": map[string]float64{
+				"west":  fc.minLng,
+				"south": fc.minLat,
+				"east":  fc.maxLng,
+				"north": fc.maxLat,
+			},
+			"radius_meters": int(clusterRadius),
+		})
+	}
+
+	if len(resultList) == 0 && len(childOrgs) > 0 {
+		fallbackList := make([]map[string]interface{}, 0)
+		database.GetDB().Table("dispute_case dc").
+			Select("so.id as org_id, so.org_name, so.longitude, so.latitude, COUNT(*) as case_count").
+			Joins("LEFT JOIN sys_organization so ON dc.organization_id = so.id").
+			Where("dc.deleted_at IS NULL").
+			Where("so.longitude IS NOT NULL AND so.latitude IS NOT NULL").
+			Where("dc.organization_id IN ?", childOrgs).
+			Group("so.id, so.org_name, so.longitude, so.latitude").
+			Order("case_count DESC").
+			Limit(limit).
+			Find(&fallbackList)
+		for i, item := range fallbackList {
+			item["rank"] = i + 1
+			item["cluster_id"] = fmt.Sprintf("ORG_%v", item["org_id"])
+			item["cluster_name"] = item["org_name"]
+			lng, _ := strconv.ParseFloat(fmt.Sprintf("%v", item["longitude"]), 64)
+			lat, _ := strconv.ParseFloat(fmt.Sprintf("%v", item["latitude"]), 64)
+			eps := 0.0045
+			item["bbox"] = map[string]float64{
+				"west":  lng - eps,
+				"south": lat - eps,
+				"east":  lng + eps,
+				"north": lat + eps,
+			}
+			item["radius_meters"] = 500
+		}
+		resultList = fallbackList
+	}
+
+	jsonData, _ := json.Marshal(resultList)
+	cache.Set(ctx, cacheKey, string(jsonData), 300)
+
+	c.JSON(http.StatusOK, response.Success(resultList))
+}
+
+func haversineDistance(lng1, lat1, lng2, lat2 float64) float64 {
+	const earthRadius = 6371000.0
+	toRad := math.Pi / 180.0
+	dLat := (lat2 - lat1) * toRad
+	dLng := (lng2 - lng1) * toRad
+	a := math.Sin(dLat/2)*math.Sin(dLat/2) +
+		math.Cos(lat1*toRad)*math.Cos(lat2*toRad)*
+			math.Sin(dLng/2)*math.Sin(dLng/2)
+	c := 2 * math.Atan2(math.Sqrt(a), math.Sqrt(1-a))
+	return earthRadius * c
+}
+
+func GetHeatmapDrilldown(ctx context.Context, c *app.RequestContext) {
+	var req BBoxDrilldownRequest
+	if err := c.BindAndValidate(&req); err != nil {
+		c.JSON(http.StatusBadRequest, response.BadRequest(err.Error()))
+		return
+	}
+
+	userInfo := middleware.GetUserInfo(c)
+	orgID := req.OrganizationID
+	if orgID == 0 {
+		orgID = userInfo.OrganizationID
+	}
+	if req.Page <= 0 {
+		req.Page = 1
+	}
+	if req.PageSize <= 0 || req.PageSize > 100 {
+		req.PageSize = 20
+	}
+
+	useSpatial := config.GetConfig().Spatial.UseSpatialIndex
+
+	db := database.GetDB().Table("dispute_case dc").
+		Select("dc.id, dc.case_no, dc.title, dc.applicant_name, dc.respondent_name, "+
+			"dc.event_address, dc.latitude, dc.longitude, dc.status, dc.created_at, "+
+			"dt.type_name, so.org_name").
+		Joins("LEFT JOIN dispute_type dt ON dc.type_id = dt.id").
+		Joins("LEFT JOIN sys_organization so ON dc.organization_id = so.id").
+		Where("dc.deleted_at IS NULL").
+		Where("dc.latitude IS NOT NULL AND dc.longitude IS NOT NULL").
+		Where("dc.latitude != 0 AND dc.longitude != 0")
+
+	hasBBox := req.WestLng != 0 || req.SouthLat != 0 || req.EastLng != 0 || req.NorthLat != 0
+	if hasBBox && req.EastLng > req.WestLng && req.NorthLat > req.SouthLat {
+		if useSpatial {
+			db = db.Where("ST_Contains(ST_MakeEnvelope(POINT(?, ?), POINT(?, ?)), dc.geom)",
+				req.WestLng, req.SouthLat, req.EastLng, req.NorthLat)
+		} else {
+			db = db.Where("dc.longitude >= ? AND dc.longitude <= ? AND dc.latitude >= ? AND dc.latitude <= ?",
+				req.WestLng, req.EastLng, req.SouthLat, req.NorthLat)
+		}
+	} else if req.CenterLng != 0 && req.CenterLat != 0 && req.RadiusMeters > 0 {
+		r := req.RadiusMeters
+		epsLat := r / 111320.0
+		epsLng := r / (111320.0 * math.Cos(req.CenterLat*math.Pi/180.0))
+		if useSpatial {
+			db = db.Where("ST_Distance_Sphere(dc.geom, ST_SRID(POINT(?, ?), 4326)) <= ?",
+				req.CenterLng, req.CenterLat, r)
+		}
+		db = db.Where("dc.longitude >= ? AND dc.longitude <= ? AND dc.latitude >= ? AND dc.latitude <= ?",
+			req.CenterLng-epsLng, req.CenterLng+epsLng,
+			req.CenterLat-epsLat, req.CenterLat+epsLat)
+	}
+
+	var childOrgs []int64
+	if orgID > 0 {
+		database.GetDB().Table("sys_organization").
+			Select("id").
+			Where("parent_id = ? OR id = ?", orgID, orgID).
+			Pluck("id", &childOrgs)
+		if len(childOrgs) > 0 {
+			db = db.Where("dc.organization_id IN ?", childOrgs)
+		}
+	}
+	if req.StartTime != "" {
+		db = db.Where("dc.created_at >= ?", req.StartTime)
+	}
+	if req.EndTime != "" {
+		db = db.Where("dc.created_at <= ?", req.EndTime)
+	}
+	if req.TypeID > 0 {
+		db = db.Where("dc.type_id = ?", req.TypeID)
+	}
+
+	var total int64
+	db.Count(&total)
+
+	var list []map[string]interface{}
+	offset := (req.Page - 1) * req.PageSize
+	db.Order("dc.created_at DESC").
+		Limit(req.PageSize).
+		Offset(offset).
+		Find(&list)
+
+	for _, item := range list {
+		if status, ok := item["status"].(int32); ok {
+			item["status_name"] = constants.CaseStatusMap[int(status)]
+		} else if status, ok := item["status"].(int64); ok {
+			item["status_name"] = constants.CaseStatusMap[int(status)]
+		} else if status, ok := item["status"].(int); ok {
+			item["status_name"] = constants.CaseStatusMap[status]
+		}
+	}
+
+	c.JSON(http.StatusOK, response.Success(map[string]interface{}{
+		"total":    total,
+		"page":     req.Page,
+		"pageSize": req.PageSize,
+		"list":     list,
+	}))
+}
+
+func GetAmapConfig(ctx context.Context, c *app.RequestContext) {
+	amapCfg := config.GetConfig().Amap
+	spatialCfg := config.GetConfig().Spatial
+	c.JSON(http.StatusOK, response.Success(map[string]interface{}{
+		"web_key":        amapCfg.WebKey,
+		"security_code":  amapCfg.SecurityCode,
+		"default_city":   amapCfg.DefaultCity,
+		"default_lng":    amapCfg.DefaultLng,
+		"default_lat":    amapCfg.DefaultLat,
+		"default_zoom":   amapCfg.DefaultZoom,
+		"cluster_radius": spatialCfg.ClusterRadiusMeters,
+		"grid_level":     spatialCfg.GridLevel,
+		"use_spatial":    spatialCfg.UseSpatialIndex,
+	}))
 }
 
 func RefreshStatsCache(ctx context.Context, c *app.RequestContext) {

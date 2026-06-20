@@ -197,6 +197,8 @@ func RegisterRoutes(h *app.Hertz) {
 			stats.GET("/heatmap", handler.GetHeatmapData)
 			stats.GET("/heatmap/timeline", handler.GetHeatmapTimeline)
 			stats.GET("/heatmap/top-communities", handler.GetTopCommunities)
+			stats.GET("/heatmap/drilldown", handler.GetHeatmapDrilldown)
+			stats.GET("/heatmap/amap-config", handler.GetAmapConfig)
 			stats.GET("/organization", handler.GetOrganizationStats)
 			stats.GET("/yearly-comparison", handler.GetYearlyComparison)
 			stats.GET("/mediator-ranking", handler.GetMediatorRanking)
