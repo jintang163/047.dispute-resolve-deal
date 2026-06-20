@@ -114,3 +114,13 @@ blockchain:
   contract_addr: "0x1234567890abcdef"
   cert_template_id: "cert-tpl-001"
   qr_code_base_url: "https://verify.your-domain.com/cert"
+
+aliyun-voice:
+  access_key_id: "your-aliyun-access-key-id"
+  access_key_secret: "your-aliyun-access-key-secret"
+  region_id: "cn-hangzhou"
+  caller_show_number: "400-123-4567"
+  tts_code: "TTS_123456789"
+  asr_vocab_id: "vocab-123456"
+  callback_url: "https://your-domain.com/api/v1/public/callback/aliyun-voice"
+  endpoint: "dyvmsapi.aliyuncs.com"

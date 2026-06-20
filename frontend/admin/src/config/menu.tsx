@@ -14,6 +14,7 @@ import {
   VideoCameraOutlined,
   FileProtectOutlined,
   HeatMapOutlined,
+  PhoneOutlined,
 } from '@ant-design/icons';
 
 export interface MenuItem {
@@ -147,6 +148,12 @@ export const menuConfig: MenuItem[] = [
         path: '/esign/certificate',
       },
     ],
+  },
+  {
+    key: 'callback',
+    label: '自动回访管理',
+    icon: React.createElement(PhoneOutlined),
+    path: '/callback',
   },
 ];
 

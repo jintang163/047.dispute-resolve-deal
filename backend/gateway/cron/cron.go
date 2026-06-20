@@ -34,6 +34,7 @@ const (
 	LockExpireStats     = 600 * time.Second
 	LockExpireSatisfy   = 600 * time.Second
 	LockExpireJudicial  = 600 * time.Second
+	LockExpireCallback  = 600 * time.Second
 )
 
 func StartCronTasks() {
@@ -54,6 +55,11 @@ func StartCronTasks() {
 		addCronTask("0 0 9 * * ?", judicialExpirationReminderTask, "judicial_expiration_reminder")
 		addCronTask("0 */10 * * * ?", videoRecordSegmentTask, "video_record_segment")
 		addCronTask("0 */1 * * * ?", videoQueueCheckTask, "video_queue_check")
+		addCronTask("0 0 1 * * ?", createCallbackForClosedCasesTask, "create_callback_for_closed_cases")
+		addCronTask("0 */30 * * * ?", processPendingCallbacksTask, "process_pending_callbacks")
+		addCronTask("0 */30 * * * ?", processRetryCallbacksTask, "process_retry_callbacks")
+		addCronTask("0 0 */6 * * ?", checkCallbackCallResultTask, "check_callback_call_result")
+		addCronTask("0 0 2 * * ?", cleanExpiredRecordingsTask, "clean_expired_recordings")
 
 		cronInstance.Start()
 		logger.Info("All cron tasks started", zap.Int("taskCount", len(entryIDs)))
@@ -932,4 +938,225 @@ func videoQueueCheckTask() {
 
 	elapsed := time.Since(startTime)
 	logger.Debug("Video queue check task completed", zap.Duration("elapsed", elapsed))
+}
+
+func createCallbackForClosedCasesTask() {
+	ctx := context.Background()
+	lockKey := constants.RedisKeyPrefixLock + "cron:create_callback_for_closed_cases"
+
+	locked, err := acquireLock(ctx, lockKey, LockExpireCallback)
+	if err != nil || !locked {
+		logger.Debug("Skip create callback for closed cases task, lock not acquired")
+		return
+	}
+	defer releaseLock(ctx, lockKey)
+
+	logger.Info("Starting create callback for closed cases task")
+	startTime := time.Now()
+
+	db := database.GetDB()
+	if db == nil {
+		logger.Error("Database not initialized")
+		return
+	}
+
+	now := time.Now()
+	sevenDaysAgo := now.AddDate(0, 0, -7)
+
+	sql := `SELECT 
+		c.id, c.case_no, c.title, c.status,
+		c.applicant_id, c.applicant_name, c.applicant_phone,
+		c.close_time
+	FROM dispute_case c
+	WHERE c.status = 50 
+		AND c.close_time IS NOT NULL
+		AND c.close_time <= ?
+		AND c.close_time >= ?
+		AND c.deleted_at IS NULL
+		AND NOT EXISTS (
+			SELECT 1 FROM callback_record cr
+			WHERE cr.case_id = c.id AND cr.deleted_at IS NULL
+		)
+	ORDER BY c.close_time ASC
+	LIMIT 100`
+
+	type ClosedCase struct {
+		ID             int64
+		CaseNo         string
+		Title          string
+		ApplicantID    int64
+		ApplicantName  string
+		ApplicantPhone string
+		CloseTime      *time.Time
+	}
+
+	var cases []ClosedCase
+	if err := db.Raw(sql, sevenDaysAgo, sevenDaysAgo.AddDate(0, 0, -30)).Scan(&cases).Error; err != nil {
+		logger.Error("Query closed cases for callback failed", logger.Error(err))
+		return
+	}
+
+	logger.Info("Found closed cases need callback", zap.Int("count", len(cases)))
+
+	callbackService := service.CallbackServiceInst()
+	createdCount := 0
+	failedCount := 0
+
+	for _, c := range cases {
+		err := callbackService.CreateCallbackForClosedCase(ctx, c.ID)
+		if err != nil {
+			logger.Warn("Create callback record failed",
+				zap.Int64("caseId", c.ID),
+				zap.String("caseNo", c.CaseNo),
+				logger.Error(err),
+			)
+			failedCount++
+		} else {
+			createdCount++
+		}
+	}
+
+	elapsed := time.Since(startTime)
+	logger.Info("Create callback for closed cases task completed",
+		zap.Int("created", createdCount),
+		zap.Int("failed", failedCount),
+		zap.Duration("elapsed", elapsed),
+	)
+}
+
+func processPendingCallbacksTask() {
+	ctx := context.Background()
+	lockKey := constants.RedisKeyPrefixLock + "cron:process_pending_callbacks"
+
+	locked, err := acquireLock(ctx, lockKey, LockExpireCallback)
+	if err != nil || !locked {
+		logger.Debug("Skip process pending callbacks task, lock not acquired")
+		return
+	}
+	defer releaseLock(ctx, lockKey)
+
+	logger.Info("Starting process pending callbacks task")
+	startTime := time.Now()
+
+	callbackService := service.CallbackServiceInst()
+	if err := callbackService.ProcessPendingCallbacks(ctx); err != nil {
+		logger.Error("Process pending callbacks failed", logger.Error(err))
+	}
+
+	elapsed := time.Since(startTime)
+	logger.Info("Process pending callbacks task completed", zap.Duration("elapsed", elapsed))
+}
+
+func processRetryCallbacksTask() {
+	ctx := context.Background()
+	lockKey := constants.RedisKeyPrefixLock + "cron:process_retry_callbacks"
+
+	locked, err := acquireLock(ctx, lockKey, LockExpireCallback)
+	if err != nil || !locked {
+		logger.Debug("Skip process retry callbacks task, lock not acquired")
+		return
+	}
+	defer releaseLock(ctx, lockKey)
+
+	logger.Info("Starting process retry callbacks task")
+	startTime := time.Now()
+
+	callbackService := service.CallbackServiceInst()
+	if err := callbackService.ProcessRetryCallbacks(ctx); err != nil {
+		logger.Error("Process retry callbacks failed", logger.Error(err))
+	}
+
+	elapsed := time.Since(startTime)
+	logger.Info("Process retry callbacks task completed", zap.Duration("elapsed", elapsed))
+}
+
+func checkCallbackCallResultTask() {
+	ctx := context.Background()
+	lockKey := constants.RedisKeyPrefixLock + "cron:check_callback_call_result"
+
+	locked, err := acquireLock(ctx, lockKey, LockExpireCallback)
+	if err != nil || !locked {
+		logger.Debug("Skip check callback call result task, lock not acquired")
+		return
+	}
+	defer releaseLock(ctx, lockKey)
+
+	logger.Info("Starting check callback call result task")
+	startTime := time.Now()
+
+	db := database.GetDB()
+	if db == nil {
+		logger.Error("Database not initialized")
+		return
+	}
+
+	type PendingCall struct {
+		ID     int64
+		CallID string
+	}
+
+	var calls []PendingCall
+	err = db.Table("callback_record").
+		Select("id, call_id").
+		Where("status = ? AND call_id IS NOT NULL AND call_id != ''", model.CallbackStatusCalling).
+		Limit(50).
+		Scan(&calls).Error
+
+	if err != nil {
+		logger.Error("Query pending callback calls failed", logger.Error(err))
+		return
+	}
+
+	logger.Info("Found pending callback calls", zap.Int("count", len(calls)))
+
+	callbackService := service.CallbackServiceInst()
+	processedCount := 0
+
+	for _, call := range calls {
+		if call.CallID == "" {
+			continue
+		}
+
+		err := callbackService.ProcessCallResult(ctx, call.CallID)
+		if err != nil {
+			logger.Warn("Process callback call result failed",
+				zap.Int64("recordId", call.ID),
+				zap.String("callId", call.CallID),
+				logger.Error(err),
+			)
+			continue
+		}
+		processedCount++
+
+		time.Sleep(100 * time.Millisecond)
+	}
+
+	elapsed := time.Since(startTime)
+	logger.Info("Check callback call result task completed",
+		zap.Int("processed", processedCount),
+		zap.Duration("elapsed", elapsed),
+	)
+}
+
+func cleanExpiredRecordingsTask() {
+	ctx := context.Background()
+	lockKey := constants.RedisKeyPrefixLock + "cron:clean_expired_recordings"
+
+	locked, err := acquireLock(ctx, lockKey, LockExpireCallback)
+	if err != nil || !locked {
+		logger.Debug("Skip clean expired recordings task, lock not acquired")
+		return
+	}
+	defer releaseLock(ctx, lockKey)
+
+	logger.Info("Starting clean expired recordings task")
+	startTime := time.Now()
+
+	callbackService := service.CallbackServiceInst()
+	if err := callbackService.CleanExpiredRecordings(ctx); err != nil {
+		logger.Error("Clean expired recordings failed", logger.Error(err))
+	}
+
+	elapsed := time.Since(startTime)
+	logger.Info("Clean expired recordings task completed", zap.Duration("elapsed", elapsed))
 }

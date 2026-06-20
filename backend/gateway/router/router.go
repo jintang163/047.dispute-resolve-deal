@@ -55,6 +55,7 @@ func RegisterRoutes(h *app.Hertz) {
 		public.POST("/video/record-callback", handler.RecordCallback)
 		public.POST("/esign/fadada-callback", handler.FaDaDaCallback)
 		public.GET("/blockchain/verify/:certNo", handler.PublicVerifyEvidence)
+		public.POST("/callback/aliyun-voice", handler.AliyunVoiceCallback)
 	}
 
 	userAuth := api.Group("", middleware.JWTAuthMiddleware())
@@ -228,6 +229,19 @@ func RegisterRoutes(h *app.Hertz) {
 			notification.POST("/send", handler.SendNotification)
 			notification.DELETE("/:id", handler.DeleteNotification)
 			notification.POST("/batch-delete", handler.BatchDeleteNotifications)
+		}
+
+		callback := userAuth.Group("/callback")
+		{
+			callback.GET("", handler.GetCallbackList)
+			callback.GET("/:id", handler.GetCallbackDetail)
+			callback.POST("", handler.CreateCallback)
+			callback.POST("/:id/initiate", handler.InitiateCallback)
+			callback.POST("/:id/retry", handler.RetryCallback)
+			callback.POST("/:id/cancel", handler.CancelCallback)
+			callback.POST("/:id/refresh", handler.RefreshCallbackResult)
+			callback.POST("/:id/archive-recording", handler.DownloadAndArchiveRecording)
+			callback.GET("/case/:caseId", handler.GetCallbacksByCase)
 		}
 
 		ws := userAuth.Group("/ws")

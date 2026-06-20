@@ -22,6 +22,7 @@ import EsignList from './pages/ESign/List';
 import EsignDetail from './pages/ESign/Detail';
 import CertificateList from './pages/ESign/Certificate';
 import PublicVerify from './pages/ESign/Verify';
+import CallbackList from './pages/Callback/List';
 import { getToken } from './utils/auth';
 import { useUserStore } from './stores/user';
 
@@ -110,6 +111,7 @@ const App: React.FC = () => {
             <Route path=":caseId/:flowId" element={<EsignDetail />} />
             <Route path="certificate" element={<CertificateList />} />
           </Route>
+          <Route path="callback" element={<CallbackList />} />
         </Route>
         <Route path="*" element={<Navigate to="/dashboard" replace />} />
       </Routes>

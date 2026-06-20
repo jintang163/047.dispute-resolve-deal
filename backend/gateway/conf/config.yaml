@@ -54,6 +54,15 @@ deepseek:
   max_tokens: 4096
   temperature: 0.7
 
+aliyun_voice:
+  access_key_id: "LTAIyour-access-key-id"
+  access_key_secret: "your-access-key-secret"
+  region_id: "cn-hangzhou"
+  caller_show_number: "057112345678"
+  tts_code: "TTS_123456789"
+  callback_url: "https://your-domain.com/api/v1/public/callback/aliyun-voice"
+  endpoint: "dyvmsapi.aliyuncs.com"
+
 milvus:
   address: "127.0.0.1:19530"
   username: ""

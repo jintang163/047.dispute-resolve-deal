@@ -89,6 +89,8 @@ func main() {
 
 	mq.StartConsumers()
 
+	service.InitCallbackService()
+
 	cron.StartCronTasks()
 
 	router.RegisterRoutes(h)

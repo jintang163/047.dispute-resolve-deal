@@ -22,6 +22,7 @@ type Config struct {
 	TRTC         TRTCConfig         `mapstructure:"trtc"`
 	FaDaDa       FaDaDaConfig       `mapstructure:"fadada"`
 	Blockchain   BlockchainConfig   `mapstructure:"blockchain"`
+	AliyunVoice  AliyunVoiceConfig  `mapstructure:"aliyun-voice"`
 	Services     ServicesConfig     `mapstructure:"services"`
 	ServicePorts ServicePortsConfig `mapstructure:"service-ports"`
 	Amap         AmapConfig         `mapstructure:"amap"`
@@ -208,4 +209,15 @@ type SpatialConfig struct {
 	ClusterRadiusMeters float64 `mapstructure:"cluster_radius_meters"`
 	UseGeohashPrefix   int     `mapstructure:"use_geohash_prefix"`
 	UseSpatialIndex    bool    `mapstructure:"use_spatial_index"`
+}
+
+type AliyunVoiceConfig struct {
+	AccessKeyID     string `mapstructure:"access_key_id"`
+	AccessKeySecret string `mapstructure:"access_key_secret"`
+	RegionID        string `mapstructure:"region_id"`
+	CallerShowNumber string `mapstructure:"caller_show_number"`
+	TtsCode         string `mapstructure:"tts_code"`
+	AsrVocabID      string `mapstructure:"asr_vocab_id"`
+	CallbackURL     string `mapstructure:"callback_url"`
+	Endpoint        string `mapstructure:"endpoint"`
 }

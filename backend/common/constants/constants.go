@@ -136,6 +136,7 @@ const (
 	MinIOPathSignature   = "signature"
 	MinIOPathAvatar      = "avatar"
 	MinIOPathJudicial    = "judicial"
+	MinIOPathCallback    = "callback"
 
 	EsignStatusDraft     = 0
 	EsignStatusPending   = 10
