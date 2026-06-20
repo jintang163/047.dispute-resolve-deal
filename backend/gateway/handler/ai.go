@@ -2,19 +2,26 @@ package handler
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/dispute-resolve/common/ai"
 	"github.com/dispute-resolve/common/constants"
 	"github.com/dispute-resolve/common/database"
+	"github.com/dispute-resolve/common/logger"
 	"github.com/dispute-resolve/common/response"
 	"github.com/dispute-resolve/common/utils"
 	"github.com/dispute-resolve/gateway/middleware"
 	"github.com/dispute-resolve/gateway/service"
 
+	common "github.com/dispute-resolve/common/model"
+
 	"github.com/cloudwego/hertz/pkg/app"
+	"gorm.io/gorm"
 )
 
 type AIConsultRequest struct {
@@ -274,6 +281,215 @@ func GetAIConfig(ctx context.Context, c *app.RequestContext) {
 		"temperature": 0.7,
 		"enabled":     true,
 	}))
+}
+
+func ExtractKeywords(ctx context.Context, c *app.RequestContext) {
+	var req struct {
+		Text        string `json:"text" binding:"required"`
+		Title       string `json:"title"`
+		CaseTypeID  int64  `json:"typeId"`
+		MaxKeywords int    `json:"maxKeywords"`
+	}
+	if err := c.BindAndValidate(&req); err != nil {
+		c.JSON(http.StatusBadRequest, response.BadRequest(err.Error()))
+		return
+	}
+
+	if req.MaxKeywords <= 0 || req.MaxKeywords > 20 {
+		req.MaxKeywords = 8
+	}
+
+	input := req.Title
+	if input == "" {
+		input = req.Text
+	} else {
+		input = req.Title + "\n" + req.Text
+	}
+
+	var typeName string
+	if req.CaseTypeID > 0 {
+		database.GetDB().Table("dispute_type").
+			Select("type_name").
+			Where("id = ?", req.CaseTypeID).
+			Scan(&typeName)
+	}
+
+	client := ai.GetDeepSeekClient()
+	prompt := buildKeywordExtractionPrompt(input, typeName, req.MaxKeywords)
+
+	result, err := client.ChatCompletion([]ai.ChatMessage{}, prompt)
+	if err != nil {
+		logger.Error("DeepSeek keyword extraction failed", logger.Error(err))
+		c.JSON(http.StatusInternalServerError, response.ServerError("关键词提取失败"))
+		return
+	}
+
+	result = strings.TrimSpace(result)
+	result = strings.TrimPrefix(result, "```json")
+	result = strings.TrimPrefix(result, "```")
+	result = strings.TrimSuffix(result, "```")
+	result = strings.TrimSpace(result)
+
+	var keywords []string
+	if err := json.Unmarshal([]byte(result), &keywords); err != nil {
+		logger.Error("Parse keyword result failed", logger.String("raw", result), logger.Error(err))
+		keywords = extractKeywordsFallback(result)
+	}
+
+	if len(keywords) > req.MaxKeywords {
+		keywords = keywords[:req.MaxKeywords]
+	}
+
+	go updateKeywordDict(keywords)
+
+	c.JSON(http.StatusOK, response.Success(map[string]interface{}{
+		"keywords": keywords,
+		"count":    len(keywords),
+	}))
+}
+
+func GetKeywordDict(ctx context.Context, c *app.RequestContext) {
+	category := c.Query("category")
+	limitStr := c.DefaultQuery("limit", "50")
+	limit, _ := strconv.Atoi(limitStr)
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+
+	db := database.GetDB().Table("dispute_keyword_dict").
+		Where("status = 1")
+
+	if category != "" {
+		db = db.Where("category = ?", category)
+	}
+
+	var list []map[string]interface{}
+	db.Order("frequency DESC").
+		Limit(limit).
+		Find(&list)
+
+	c.JSON(http.StatusOK, response.Success(list))
+}
+
+func GetHotKeywords(ctx context.Context, c *app.RequestContext) {
+	daysStr := c.DefaultQuery("days", "30")
+	days, _ := strconv.Atoi(daysStr)
+	if days <= 0 {
+		days = 30
+	}
+
+	limitStr := c.DefaultQuery("limit", "20")
+	limit, _ := strconv.Atoi(limitStr)
+	if limit <= 0 || limit > 100 {
+		limit = 20
+	}
+
+	startDate := time.Now().AddDate(0, 0, -days).Format("2006-01-02")
+
+	var list []map[string]interface{}
+	database.GetDB().Table("dispute_keyword_dict").
+		Select("keyword, category, frequency").
+		Where("status = 1 AND updated_at >= ?", startDate).
+		Order("frequency DESC").
+		Limit(limit).
+		Find(&list)
+
+	c.JSON(http.StatusOK, response.Success(list))
+}
+
+func buildKeywordExtractionPrompt(text string, typeName string, maxKeywords int) string {
+	typeHint := ""
+	if typeName != "" {
+		typeHint = fmt.Sprintf("\n已知纠纷类型为「%s」，请提取与该类型相关且具体的关键词。", typeName)
+	}
+
+	return fmt.Sprintf(`你是一个专业的矛盾纠纷分析助手。请从以下纠纷描述中提取核心关键词标签。
+
+要求：
+1. 提取%d个以内的关键词
+2. 关键词要具体、有区分度，如"噪音扰民""欠薪3个月""漏水赔偿""物业费纠纷""邻里围墙争议"等
+3. 不要提取过于宽泛的词如"纠纷""矛盾""问题"等
+4. 关键词应覆盖：纠纷性质(如噪音/欠薪/漏水)、行为(如拖欠/侵占/骚扰)、对象(如物业/房东/雇主)、程度(如3个月/2万元/长期)
+5. 返回纯JSON数组格式，不要有其他文字
+6. 每个关键词2-8个字
+%s
+
+纠纷描述：
+%s`, maxKeywords, typeHint, text)
+}
+
+func extractKeywordsFallback(raw string) []string {
+	raw = strings.Trim(raw, "[]\"")
+	parts := strings.Split(raw, ",")
+	keywords := make([]string, 0)
+	for _, p := range parts {
+		k := strings.TrimSpace(strings.Trim(p, "\"' "))
+		if k != "" && len([]rune(k)) >= 2 && len([]rune(k)) <= 16 {
+			keywords = append(keywords, k)
+		}
+	}
+	return keywords
+}
+
+func updateKeywordDict(keywords []string) {
+	for _, kw := range keywords {
+		kw = strings.TrimSpace(kw)
+		if kw == "" {
+			continue
+		}
+
+		var count int64
+		database.GetDB().Table("dispute_keyword_dict").
+			Where("keyword = ?", kw).
+			Count(&count)
+
+		if count > 0 {
+			database.GetDB().Table("dispute_keyword_dict").
+				Where("keyword = ?", kw).
+				UpdateColumn("frequency", gorm.Expr("frequency + 1"))
+		} else {
+			category := classifyKeyword(kw)
+			database.GetDB().Table("dispute_keyword_dict").Create(map[string]interface{}{
+				"keyword":     kw,
+				"category":    category,
+				"frequency":   1,
+				"source_type": "ai",
+				"status":      1,
+			})
+		}
+	}
+}
+
+func classifyKeyword(kw string) string {
+	natureKeywords := []string{"噪音", "漏水", "油烟", "气味", "震动", "辐射", "粉尘", "污水", "占用", "侵占", "遮挡", "违建", "违章"}
+	behaviorKeywords := []string{"拖欠", "欠薪", "拒付", "拖欠", "骚扰", "威胁", "殴打", "辱骂", "欺诈", "诈骗", "违约", "拒绝"}
+	objectKeywords := []string{"物业", "房东", "租客", "雇主", "员工", "邻里", "业主", "开发商", "中介", "施工"}
+
+	runeKw := []rune(kw)
+	for _, k := range natureKeywords {
+		if strings.Contains(kw, k) {
+			return "纠纷性质"
+		}
+	}
+	for _, k := range behaviorKeywords {
+		if strings.Contains(kw, k) {
+			return "行为"
+		}
+	}
+	for _, k := range objectKeywords {
+		if strings.Contains(kw, k) {
+			return "对象"
+		}
+	}
+
+	if len(runeKw) > 0 {
+		last := string(runeKw[len(runeKw)-1:])
+		if last == "重" || last == "大" || last == "急" || last == "久" {
+			return "程度"
+		}
+	}
+
+	return "纠纷性质"
 }
 
 func UpdateAIConfig(ctx context.Context, c *app.RequestContext) {

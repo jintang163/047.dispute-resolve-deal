@@ -1,6 +1,6 @@
-import React, { useState, useRef } from 'react';
-import { Button, Tag, Space, App, Modal } from 'antd';
-import { PlusOutlined, EyeOutlined, EditOutlined, DeleteOutlined, ExclamationCircleOutlined } from '@ant-design/icons';
+import React, { useState, useRef, useEffect } from 'react';
+import { Button, Tag, Space, App, Modal, Card } from 'antd';
+import { PlusOutlined, EyeOutlined, EditOutlined, DeleteOutlined, ExclamationCircleOutlined, ThunderboltOutlined, FireOutlined } from '@ant-design/icons';
 import {
   ProTable,
   ProFormSelect,
@@ -9,7 +9,7 @@ import {
 } from '@ant-design/pro-components';
 import type { ActionType, ProColumns } from '@ant-design/pro-components';
 import { useNavigate } from 'react-router-dom';
-import { disputeService, DisputeCase } from '../../services/dispute';
+import { disputeService, DisputeCase, KeywordDictItem } from '../../services/dispute';
 import dayjs from 'dayjs';
 
 const { confirm } = Modal;
@@ -46,11 +46,38 @@ const typeTextMap: Record<string, string> = {
   other: '其他纠纷',
 };
 
+const keywordCategoryColor: Record<string, string> = {
+  '纠纷性质': 'red',
+  '行为': 'orange',
+  '对象': 'blue',
+  '程度': 'purple',
+};
+
 const DisputeList: React.FC = () => {
   const navigate = useNavigate();
   const { message } = App.useApp();
   const actionRef = useRef<ActionType>();
   const [selectedRowKeys, setSelectedRowKeys] = useState<React.Key[]>([]);
+  const [activeTagKeyword, setActiveTagKeyword] = useState<string>('');
+  const [hotKeywords, setHotKeywords] = useState<KeywordDictItem[]>([]);
+
+  useEffect(() => {
+    disputeService.getHotKeywords({ days: 30, limit: 15 }).then(res => {
+      const data = (res as any)?.data || res;
+      if (Array.isArray(data)) {
+        setHotKeywords(data);
+      }
+    }).catch(() => {});
+  }, []);
+
+  const handleTagKeywordClick = (kw: string) => {
+    if (activeTagKeyword === kw) {
+      setActiveTagKeyword('');
+    } else {
+      setActiveTagKeyword(kw);
+    }
+    actionRef.current?.reload();
+  };
 
   const columns: ProColumns<DisputeCase>[] = [
     {
@@ -73,6 +100,31 @@ const DisputeList: React.FC = () => {
       valueEnum: typeTextMap,
       render: (_, entity) => {
         return <Tag color="blue">{typeTextMap[entity.type] || entity.type}</Tag>;
+      },
+    },
+    {
+      title: '关键词标签',
+      dataIndex: 'keywords',
+      width: 220,
+      search: false,
+      render: (_, entity) => {
+        const kws = entity.keywords;
+        if (!kws || kws.length === 0) return <span style={{ color: '#ccc' }}>-</span>;
+        return (
+          <Space size={[2, 4]} wrap>
+            {kws.slice(0, 4).map((kw, idx) => (
+              <Tag
+                key={kw}
+                color={['red', 'volcano', 'orange', 'gold', 'lime', 'green', 'cyan', 'blue'][idx % 8]}
+                style={{ fontSize: 11, padding: '0 4px', margin: 0, cursor: 'pointer' }}
+                onClick={() => handleTagKeywordClick(kw)}
+              >
+                {kw}
+              </Tag>
+            ))}
+            {kws.length > 4 && <Tag style={{ fontSize: 11 }}>+{kws.length - 4}</Tag>}
+          </Space>
+        );
       },
     },
     {
@@ -177,71 +229,115 @@ const DisputeList: React.FC = () => {
   ];
 
   return (
-    <ProTable<DisputeCase>
-      columns={columns}
-      actionRef={actionRef}
-      cardBordered
-      rowKey="id"
-      search={{
-        labelWidth: 'auto',
-        defaultCollapsed: false,
-      }}
-      rowSelection={{
-        onChange: (keys) => {
-          setSelectedRowKeys(keys);
-        },
-      }}
-      dateFormatter="string"
-      headerTitle="纠纷案件列表"
-      toolBarRender={() => [
-        <Button
-          key="create"
-          type="primary"
-          icon={<PlusOutlined />}
-          onClick={() => navigate('/dispute/create')}
+    <>
+      {hotKeywords.length > 0 && (
+        <Card
+          size="small"
+          style={{ marginBottom: 12 }}
+          bodyStyle={{ padding: '8px 16px' }}
         >
-          新增案件
-        </Button>,
-      ]}
-      request={async (params, sort, filter) => {
-        try {
-          const startDate = (params as any).createTime?.[0];
-          const endDate = (params as any).createTime?.[1];
-          const res = await disputeService.getList({
-            pageNum: params.current,
-            pageSize: params.pageSize,
-            keyword: params.keyword,
-            type: params.type,
-            status: params.status,
-            startDate,
-            endDate,
-            ...filter,
-          });
-          const data = res.data || res;
-          return {
-            data: data.list || [],
-            success: true,
-            total: data.total || 0,
-          };
-        } catch (error) {
-          return {
-            data: [],
-            success: false,
-            total: 0,
-          };
-        }
-      }}
-      columnsState={{
-        persistenceKey: 'dispute-list-columns',
-        persistenceType: 'localStorage',
-      }}
-      pagination={{
-        showSizeChanger: true,
-        showQuickJumper: true,
-        showTotal: (total) => `共 ${total} 条记录`,
-      }}
-      scroll={{ x: 1400 }}
-    />
+          <Space size={4} wrap>
+            <FireOutlined style={{ color: '#ff4d4f', marginRight: 4 }} />
+            <span style={{ color: '#666', marginRight: 8, fontSize: 13 }}>热门标签:</span>
+            {hotKeywords.map(item => (
+              <Tag
+                key={item.keyword}
+                color={activeTagKeyword === item.keyword ? '#1890ff' : keywordCategoryColor[item.category] || 'default'}
+                style={{
+                  cursor: 'pointer',
+                  fontSize: 12,
+                  padding: '0 6px',
+                  opacity: activeTagKeyword && activeTagKeyword !== item.keyword ? 0.4 : 1,
+                }}
+                onClick={() => handleTagKeywordClick(item.keyword)}
+              >
+                {item.keyword}
+                {item.frequency > 1 && <span style={{ marginLeft: 2, opacity: 0.6 }}>({item.frequency})</span>}
+              </Tag>
+            ))}
+            {activeTagKeyword && (
+              <Tag
+                color="default"
+                style={{ cursor: 'pointer', fontSize: 12 }}
+                onClick={() => {
+                  setActiveTagKeyword('');
+                  actionRef.current?.reload();
+                }}
+              >
+                ✕ 清除筛选
+              </Tag>
+            )}
+          </Space>
+        </Card>
+      )}
+
+      <ProTable<DisputeCase>
+        columns={columns}
+        actionRef={actionRef}
+        cardBordered
+        rowKey="id"
+        search={{
+          labelWidth: 'auto',
+          defaultCollapsed: false,
+        }}
+        rowSelection={{
+          onChange: (keys) => {
+            setSelectedRowKeys(keys);
+          },
+        }}
+        dateFormatter="string"
+        headerTitle="纠纷案件列表"
+        toolBarRender={() => [
+          <Button
+            key="create"
+            type="primary"
+            icon={<PlusOutlined />}
+            onClick={() => navigate('/dispute/create')}
+          >
+            新增案件
+          </Button>,
+        ]}
+        request={async (params, sort, filter) => {
+          try {
+            const startDate = (params as any).createTime?.[0];
+            const endDate = (params as any).createTime?.[1];
+            const res = await disputeService.getList({
+              pageNum: params.current,
+              pageSize: params.pageSize,
+              keyword: params.keyword,
+              tagKeyword: activeTagKeyword || undefined,
+              type: params.type,
+              status: params.status,
+              startDate,
+              endDate,
+              ...filter,
+            });
+            const data = res.data || res;
+            return {
+              data: data.list || [],
+              success: true,
+              total: data.total || 0,
+            };
+          } catch (error) {
+            return {
+              data: [],
+              success: false,
+              total: 0,
+            };
+          }
+        }}
+        columnsState={{
+          persistenceKey: 'dispute-list-columns',
+          persistenceType: 'localStorage',
+        }}
+        pagination={{
+          showSizeChanger: true,
+          showQuickJumper: true,
+          showTotal: (total) => `共 ${total} 条记录`,
+        }}
+        scroll={{ x: 1600 }}
+      />
+    </>
   );
 };
 

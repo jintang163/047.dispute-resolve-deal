@@ -6,8 +6,10 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
+	"github.com/dispute-resolve/common/ai"
 	"github.com/dispute-resolve/common/cache"
 	"github.com/dispute-resolve/common/constants"
 	"github.com/dispute-resolve/common/database"
@@ -40,6 +42,7 @@ type DisputeCreateRequest struct {
 	Longitude      float64 `json:"longitude"`
 	Latitude       float64 `json:"latitude"`
 	EvidenceIDs    []int64 `json:"evidenceIds"`
+	Keywords       []string `json:"keywords"`
 }
 
 type DisputeListRequest struct {
@@ -50,6 +53,8 @@ type DisputeListRequest struct {
 	TypeID       int64  `form:"typeId"`
 	MediatorID   int64  `form:"mediatorId"`
 	OrganizationID int64 `form:"organizationId"`
+	Keyword      string `form:"keyword"`
+	TagKeyword   string `form:"tagKeyword"`
 	common.DateRangeQuery
 }
 
@@ -93,8 +98,11 @@ func GetDisputeList(ctx context.Context, c *app.RequestContext) {
 		db = db.Where("dc.mediator_id = ?", req.MediatorID)
 	}
 	if req.Keyword != "" {
-		db = db.Where("dc.title LIKE ? OR dc.description LIKE ? OR dc.case_no LIKE ?", 
+		db = db.Where("dc.title LIKE ? OR dc.description LIKE ? OR dc.case_no LIKE ?",
 			"%"+req.Keyword+"%", "%"+req.Keyword+"%", "%"+req.Keyword+"%")
+	}
+	if req.TagKeyword != "" {
+		db = db.Where("JSON_CONTAINS(dc.keywords, ?)", fmt.Sprintf(`"%s"`, req.TagKeyword))
 	}
 	if req.StartTime != "" {
 		db = db.Where("dc.created_at >= ?", req.StartTime)
@@ -229,6 +237,23 @@ func CreateDispute(ctx context.Context, c *app.RequestContext) {
 		"organization_id":   orgID,
 		"created_by":        userInfo.UserID,
 		"deadline":          time.Now().AddDate(0, 0, 15),
+	}
+
+	if len(req.Keywords) > 0 {
+		keywordsJSON, _ := json.Marshal(req.Keywords)
+		caseData["keywords"] = string(keywordsJSON)
+		go updateKeywordDict(req.Keywords)
+	} else if req.Description != "" {
+		go func() {
+			keywords := autoExtractKeywords(req.Title, req.Description, req.TypeID)
+			if len(keywords) > 0 {
+				keywordsJSON, _ := json.Marshal(keywords)
+				database.GetDB().Table("dispute_case").
+					Where("id = ?", caseID).
+					Update("keywords", string(keywordsJSON))
+				go updateKeywordDict(keywords)
+			}
+		}()
 	}
 
 	if req.OccurTime != "" {
@@ -625,4 +650,47 @@ func UpdateDisputeStatus(ctx context.Context, c *app.RequestContext) {
 	cache.Del(ctx, cacheKey)
 
 	c.JSON(http.StatusOK, response.SuccessWithMessage(nil, "状态更新成功"))
+}
+
+func autoExtractKeywords(title, description string, typeID int64) []string {
+	input := title
+	if input == "" {
+		input = description
+	} else {
+		input = title + "\n" + description
+	}
+
+	var typeName string
+	if typeID > 0 {
+		database.GetDB().Table("dispute_type").
+			Select("type_name").
+			Where("id = ?", typeID).
+			Scan(&typeName)
+	}
+
+	client := ai.GetDeepSeekClient()
+	prompt := buildKeywordExtractionPrompt(input, typeName, 6)
+
+	result, err := client.ChatCompletion([]ai.ChatMessage{}, prompt)
+	if err != nil {
+		logger.Error("Auto keyword extraction failed", logger.Error(err))
+		return nil
+	}
+
+	result = strings.TrimSpace(result)
+	result = strings.TrimPrefix(result, "```json")
+	result = strings.TrimPrefix(result, "```")
+	result = strings.TrimSuffix(result, "```")
+	result = strings.TrimSpace(result)
+
+	var keywords []string
+	if err := json.Unmarshal([]byte(result), &keywords); err != nil {
+		keywords = extractKeywordsFallback(result)
+	}
+
+	if len(keywords) > 8 {
+		keywords = keywords[:8]
+	}
+
+	return keywords
 }

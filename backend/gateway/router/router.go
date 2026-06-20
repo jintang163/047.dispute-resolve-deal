@@ -274,6 +274,9 @@ func RegisterRoutes(h *app.Hertz) {
 				ai.PUT("/law-articles/:id", handler.UpdateLawArticle)
 				ai.DELETE("/law-articles/:id", handler.DeleteLawArticle)
 				ai.POST("/law-articles/vectorize", handler.VectorizeLawArticles)
+				ai.POST("/keywords/extract", handler.ExtractKeywords)
+				ai.GET("/keywords/dict", handler.GetKeywordDict)
+				ai.GET("/keywords/hot", handler.GetHotKeywords)
 				ai.GET("/config", handler.GetAIConfig)
 				ai.PUT("/config", handler.UpdateAIConfig)
 			}

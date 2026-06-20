@@ -23,12 +23,14 @@ export interface DisputeCase {
   updateTime?: string;
   creator?: string;
   creatorName?: string;
+  keywords?: string[];
 }
 
 export interface DisputeListParams {
   pageNum?: number;
   pageSize?: number;
   keyword?: string;
+  tagKeyword?: string;
   type?: string;
   status?: string;
   orgId?: string;
@@ -54,6 +56,21 @@ export interface CreateDisputeParams {
   partyAPhone?: string;
   partyBPhone?: string;
   orgId?: string;
+  keywords?: string[];
+}
+
+export interface KeywordExtractResult {
+  keywords: string[];
+  count: number;
+}
+
+export interface KeywordDictItem {
+  id: number;
+  keyword: string;
+  category: string;
+  frequency: number;
+  source_type: string;
+  status: number;
 }
 
 export interface ApprovalRecord {
@@ -242,5 +259,22 @@ export const disputeService = {
 
   getAmapConfig: () => {
     return request.get<AmapConfig>('/stats/heatmap/amap-config');
+  },
+
+  extractKeywords: (text: string, title?: string, typeId?: number) => {
+    return request.post<KeywordExtractResult>('/ai/keywords/extract', {
+      text,
+      title: title || '',
+      typeId: typeId || 0,
+      maxKeywords: 8,
+    });
+  },
+
+  getKeywordDict: (params?: { category?: string; limit?: number }) => {
+    return request.get<KeywordDictItem[]>('/ai/keywords/dict', { params });
+  },
+
+  getHotKeywords: (params?: { days?: number; limit?: number }) => {
+    return request.get<KeywordDictItem[]>('/ai/keywords/hot', { params });
   },
 };
