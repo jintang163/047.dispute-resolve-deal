@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -20,6 +21,14 @@ import (
 
 	"github.com/cloudwego/hertz/pkg/app"
 )
+
+type KeywordStatItem struct {
+	Keyword    string  `json:"keyword"`
+	Count      int     `json:"count"`
+	Ratio      float64 `json:"ratio"`
+	Category   string  `json:"category"`
+	SampleSize int     `json:"sampleSize"`
+}
 
 type HeatmapQueryRequest struct {
 	StartTime      string `form:"startTime"`
@@ -876,4 +885,146 @@ func RefreshStatsCache(ctx context.Context, c *app.RequestContext) {
 	c.JSON(http.StatusOK, response.SuccessWithMessage(map[string]interface{}{
 		"deletedCount": deleted,
 	}, "缓存刷新成功"))
+}
+
+func GetKeywordStats(ctx context.Context, c *app.RequestContext) {
+	daysStr := c.DefaultQuery("days", "30")
+	days, _ := strconv.Atoi(daysStr)
+	if days <= 0 {
+		days = 30
+	}
+	limitStr := c.DefaultQuery("limit", "20")
+	limit, _ := strconv.Atoi(limitStr)
+	if limit <= 0 || limit > 100 {
+		limit = 20
+	}
+	typeID, _ := strconv.ParseInt(c.DefaultQuery("typeId", "0"), 10, 64)
+	orgID, _ := strconv.ParseInt(c.DefaultQuery("organizationId", "0"), 10, 64)
+
+	startDate := time.Now().AddDate(0, 0, -days)
+
+	baseDB := database.GetDB().Table("dispute_case dc").
+		Where("dc.deleted_at IS NULL").
+		Where("dc.created_at >= ?", startDate).
+		Where("dc.keywords IS NOT NULL")
+
+	if typeID > 0 {
+		typePath := fmt.Sprintf("/%d/", typeID)
+		baseDB = baseDB.Where("(dc.type_id = ? OR dc.type_path LIKE ?)", typeID, typePath+"%")
+	}
+	if orgID > 0 {
+		baseDB = baseDB.Where("dc.organization_id = ?", orgID)
+	}
+
+	var rows []map[string]interface{}
+	baseDB.Select("dc.id, dc.keywords").
+		Order("dc.created_at DESC").
+		Limit(5000).
+		Scan(&rows)
+
+	counter := make(map[string]int)
+	caseIDs := make(map[string][]int64)
+	totalCases := int64(0)
+
+	for _, row := range rows {
+		totalCases++
+		caseID, _ := toInt64Safe(row["id"])
+		raw := row["keywords"]
+		var kws []string
+		switch v := raw.(type) {
+		case []byte:
+			_ = json.Unmarshal(v, &kws)
+		case string:
+			_ = json.Unmarshal([]byte(v), &kws)
+		}
+		for _, kw := range kws {
+			kw = strings.TrimSpace(kw)
+			if kw == "" {
+				continue
+			}
+			counter[kw]++
+			caseIDs[kw] = append(caseIDs[kw], caseID)
+		}
+	}
+
+	typeItem struct {
+		Keyword    string  `json:"keyword"`
+		Count      int     `json:"count"`
+		Ratio      float64 `json:"ratio"`
+		Category   string  `json:"category"`
+		SampleSize int     `json:"sampleSize"`
+	}
+	_ = typeItem{}
+
+	list := make([]*KeywordStatItem, 0, len(counter))
+	for kw, cnt := range counter {
+		item := &KeywordStatItem{
+			Keyword:    kw,
+			Count:      cnt,
+			SampleSize: len(caseIDs[kw]),
+		}
+		if totalCases > 0 {
+			item.Ratio = float64(cnt) / float64(totalCases)
+		}
+		list = append(list, item)
+	}
+
+	sort.Slice(list, func(i, j int) bool {
+		return list[i].Count > list[j].Count
+	})
+	if len(list) > limit {
+		list = list[:limit]
+	}
+
+	if len(list) > 0 {
+		keywordsList := make([]string, 0, len(list))
+		for _, it := range list {
+			keywordsList = append(keywordsList, it.Keyword)
+		}
+		var dictItems []map[string]interface{}
+		database.GetDB().Table("dispute_keyword_dict").
+			Select("keyword, category").
+			Where("keyword IN ?", keywordsList).
+			Find(&dictItems)
+		kwCat := make(map[string]string)
+		for _, d := range dictItems {
+			if k, ok := d["keyword"].(string); ok {
+				if cat, ok2 := d["category"].(string); ok2 {
+					kwCat[k] = cat
+				}
+			}
+		}
+		for _, it := range list {
+			if cat, ok := kwCat[it.Keyword]; ok {
+				it.Category = cat
+			}
+		}
+	}
+
+	c.JSON(http.StatusOK, response.Success(map[string]interface{}{
+		"list":        list,
+		"total_cases": totalCases,
+		"unique_kws":  len(counter),
+		"days":        days,
+	}))
+}
+
+func toInt64Safe(v interface{}) (int64, bool) {
+	if v == nil {
+		return 0, false
+	}
+	switch val := v.(type) {
+	case int64:
+		return val, true
+	case int32:
+		return int64(val), true
+	case int:
+		return int64(val), true
+	case float64:
+		return int64(val), true
+	case string:
+		n, e := strconv.ParseInt(val, 10, 64)
+		return n, e == nil
+	}
+	return 0, false
 }

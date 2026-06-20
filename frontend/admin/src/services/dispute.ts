@@ -4,23 +4,32 @@ export interface DisputeCase {
   id: string;
   caseNo: string;
   title: string;
-  type: string;
+  typeId?: string;
+  type?: string;
   typeName?: string;
   status: string;
   statusName?: string;
   description?: string;
+  occurAddress?: string;
   address?: string;
   urgency?: string;
+  caseLevel?: string;
+  reporterName?: string;
+  reporterPhone?: string;
+  respondentName?: string;
+  respondentPhone?: string;
   partyA?: string;
   partyB?: string;
   partyAPhone?: string;
   partyBPhone?: string;
   orgId?: string;
+  organizationId?: string;
   orgName?: string;
   mediatorId?: string;
   mediatorName?: string;
   createTime?: string;
   updateTime?: string;
+  createdAt?: string;
   creator?: string;
   creatorName?: string;
   keywords?: string[];
@@ -47,30 +56,51 @@ export interface DisputeListResponse {
 
 export interface CreateDisputeParams {
   title: string;
-  type: string;
+  typeId: number;
   description?: string;
-  address?: string;
-  urgency?: string;
-  partyA: string;
-  partyB: string;
-  partyAPhone?: string;
-  partyBPhone?: string;
-  orgId?: string;
+  occurAddress?: string;
+  occurTime?: string;
+  expectation?: string;
+  caseLevel?: number;
+  caseSource?: number;
+  reporterName: string;
+  reporterPhone?: string;
+  reporterAddress?: string;
+  reporterIdCard?: string;
+  respondentName: string;
+  respondentPhone?: string;
+  respondentAddress?: string;
+  organizationId?: number;
+  longitude?: number;
+  latitude?: number;
+  evidenceIds?: number[];
   keywords?: string[];
 }
 
 export interface KeywordExtractResult {
   keywords: string[];
   count: number;
+  suggestedTypeId?: number;
+  suggestedTypeName?: string;
+  reason?: string;
 }
 
-export interface KeywordDictItem {
+export interface DisputeTypeNode {
   id: number;
+  typeCode: string;
+  typeName: string;
+  parentId: number;
+  level: number;
+  icon?: string;
+  children?: DisputeTypeNode[];
+}
+
+export interface KeywordStatItem {
   keyword: string;
+  count: number;
+  ratio: number;
   category: string;
-  frequency: number;
-  source_type: string;
-  status: number;
+  sampleSize: number;
 }
 
 export interface ApprovalRecord {
@@ -222,7 +252,7 @@ export const disputeService = {
   },
 
   getTypes: () => {
-    return request.get<{ id: string; name: string; code: string }[]>('/dispute/types');
+    return request.get<DisputeTypeNode[]>('/dispute/types');
   },
 
   getStats: () => {
@@ -231,6 +261,27 @@ export const disputeService = {
 
   getTrend: (days: number = 30) => {
     return request.get<any>(`/stats/dispute/trend?days=${days}`);
+  },
+
+  getKeywordStats: (params?: { days?: number; limit?: number; typeId?: number; organizationId?: number }) => {
+    return request.get<{ list: KeywordStatItem[]; total_cases: number; unique_kws: number; days: number }>(
+      '/stats/keywords/aggregation',
+      { params },
+    );
+  },
+
+  getKeywordDict: (params?: { category?: string; limit?: number }) => {
+    return request.get<{ keyword: string; category: string; frequency: number; status: number }[]>(
+      '/ai/keywords/dict',
+      { params },
+    );
+  },
+
+  getHotKeywords: (params?: { days?: number; limit?: number }) => {
+    return request.get<{ keyword: string; category: string; frequency: number; status: number }[]>(
+      '/ai/keywords/hot',
+      { params },
+    );
   },
 
   assignMediator: (id: string, mediatorId: string) => {
@@ -268,13 +319,5 @@ export const disputeService = {
       typeId: typeId || 0,
       maxKeywords: 8,
     });
-  },
-
-  getKeywordDict: (params?: { category?: string; limit?: number }) => {
-    return request.get<KeywordDictItem[]>('/ai/keywords/dict', { params });
-  },
-
-  getHotKeywords: (params?: { days?: number; limit?: number }) => {
-    return request.get<KeywordDictItem[]>('/ai/keywords/hot', { params });
   },
 };

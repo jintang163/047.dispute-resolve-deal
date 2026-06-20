@@ -314,8 +314,17 @@ func ExtractKeywords(ctx context.Context, c *app.RequestContext) {
 			Scan(&typeName)
 	}
 
+	var allTypes []map[string]interface{}
+	database.GetDB().Table("dispute_type").
+		Select("id, type_code, type_name, parent_id, level").
+		Where("status = 1").
+		Order("level ASC, sort_order ASC, id ASC").
+		Find(&allTypes)
+
+	typeTreeText := buildDisputeTypeTreeText(allTypes)
+
 	client := ai.GetDeepSeekClient()
-	prompt := buildKeywordExtractionPrompt(input, typeName, req.MaxKeywords)
+	prompt := buildKeywordExtractionPromptV2(input, typeName, typeTreeText, req.MaxKeywords)
 
 	result, err := client.ChatCompletion([]ai.ChatMessage{}, prompt)
 	if err != nil {
@@ -330,9 +339,42 @@ func ExtractKeywords(ctx context.Context, c *app.RequestContext) {
 	result = strings.TrimSuffix(result, "```")
 	result = strings.TrimSpace(result)
 
-	var keywords []string
-	if err := json.Unmarshal([]byte(result), &keywords); err != nil {
-		logger.Error("Parse keyword result failed", logger.String("raw", result), logger.Error(err))
+	keywords := []string{}
+	suggestedTypeID := int64(0)
+	suggestedTypeName := ""
+	suggestionReason := ""
+
+	var parsedResult map[string]interface{}
+	if err := json.Unmarshal([]byte(result), &parsedResult); err == nil {
+		if kws, ok := parsedResult["keywords"].([]interface{}); ok {
+			for _, kw := range kws {
+				if s, ok := kw.(string); ok {
+					s = strings.TrimSpace(s)
+					if s != "" {
+						keywords = append(keywords, s)
+					}
+				}
+			}
+		}
+		if tid, ok := parsedResult["suggestedTypeId"]; ok {
+			switch v := tid.(type) {
+			case float64:
+				suggestedTypeID = int64(v)
+			case int64:
+				suggestedTypeID = v
+			case string:
+				suggestedTypeID, _ = strconv.ParseInt(v, 10, 64)
+			}
+		}
+		if tname, ok := parsedResult["suggestedTypeName"].(string); ok {
+			suggestedTypeName = tname
+		}
+		if reason, ok := parsedResult["reason"].(string); ok {
+			suggestionReason = reason
+		}
+	} else {
+		logger.Warn("Parse structured keyword result failed, fallback to legacy list",
+			logger.String("raw", result[:min(len(result), 200)]), logger.Error(err))
 		keywords = extractKeywordsFallback(result)
 	}
 
@@ -340,13 +382,111 @@ func ExtractKeywords(ctx context.Context, c *app.RequestContext) {
 		keywords = keywords[:req.MaxKeywords]
 	}
 
+	if suggestedTypeID > 0 {
+		var checkName string
+		database.GetDB().Table("dispute_type").
+			Select("type_name").
+			Where("id = ?", suggestedTypeID).
+			Scan(&checkName)
+		if checkName == "" {
+			suggestedTypeID = 0
+		} else {
+			suggestedTypeName = checkName
+		}
+	}
+
 	go updateKeywordDict(keywords)
 
 	c.JSON(http.StatusOK, response.Success(map[string]interface{}{
-		"keywords": keywords,
-		"count":    len(keywords),
+		"keywords":          keywords,
+		"count":             len(keywords),
+		"suggestedTypeId":   suggestedTypeID,
+		"suggestedTypeName": suggestedTypeName,
+		"reason":            suggestionReason,
 	}))
 }
+
+func buildDisputeTypeTreeText(types []map[string]interface{}) string {
+	typeMap := make(map[int64]map[string]interface{})
+	for _, t := range types {
+		id := toInt64(t["id"])
+		typeMap[id] = t
+		t["children"] = []map[string]interface{}{}
+	}
+	root := []map[string]interface{}{}
+	for _, t := range types {
+		pid := toInt64(t["parent_id"])
+		if pid == 0 {
+			root = append(root, t)
+		} else if parent, ok := typeMap[pid]; ok {
+			ch := parent["children"].([]map[string]interface{})
+			parent["children"] = append(ch, t)
+		}
+	}
+	var sb strings.Builder
+	writeDisputeTypeTree(&sb, root, 0)
+	return sb.String()
+}
+
+func writeDisputeTypeTree(sb *strings.Builder, list []map[string]interface{}, indent int) {
+	for _, t := range list {
+		id := toInt64(t["id"])
+		name := t["type_name"].(string)
+		sb.WriteString(strings.Repeat("  ", indent))
+		sb.WriteString(fmt.Sprintf("- id=%d | %s\n", id, name))
+		if children, ok := t["children"].([]map[string]interface{}); ok && len(children) > 0 {
+			writeDisputeTypeTree(sb, children, indent+1)
+		}
+	}
+}
+
+func toInt64(v interface{}) int64 {
+	switch val := v.(type) {
+	case int64:
+		return val
+	case int32:
+		return int64(val)
+	case int:
+		return int64(val)
+	case float64:
+		return int64(val)
+	case string:
+		n, _ := strconv.ParseInt(val, 10, 64)
+		return n
+	default:
+		return 0
+	}
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+func buildKeywordExtractionPromptV2(text, typeNameHint, typeTree string, maxKeywords int) string {
+	typeHint := ""
+	if typeNameHint != "" {
+		typeHint = fmt.Sprintf("\n用户已初选的纠纷大类为「%s」，请在此大类范围内优先推断。", typeNameHint)
+	}
+
+	return fmt.Sprintf(`你是矛盾纠纷分类与打标签专家。请从纠纷描述中：
+1) 提取8个以内有区分度的核心关键词
+2) 从下方的纠纷类型三级分类树中，推断最匹配的**三级子分类的 ID**（务必选择一个叶子节点）
+
+要求：
+- 关键词：具体，如"噪音扰民""欠薪3个月""漏水赔偿"，不要"纠纷""问题"等宽泛词
+- 分类：严格从树形中选存在的叶子节点的id；不能编造id；若拿不准选最接近的
+- 返回纯JSON，格式：{"keywords": [...], "suggestedTypeId": 数字id, "suggestedTypeName": "名称", "reason": "匹配理由（一句话）"}
+
+纠纷类型三级分类树（id | 名称）：
+%s%s
+
+纠纷描述：
+%s`, typeTree, typeHint, text)
+}
+
 
 func GetKeywordDict(ctx context.Context, c *app.RequestContext) {
 	category := c.Query("category")

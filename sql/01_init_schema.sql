@@ -127,6 +127,7 @@ CREATE TABLE IF NOT EXISTS dispute_case (
     description TEXT COMMENT '纠纷简述',
     type_id BIGINT NOT NULL COMMENT '纠纷类型ID(三级)',
     type_path VARCHAR(512) DEFAULT '' COMMENT '类型路径',
+    keywords JSON DEFAULT NULL COMMENT 'AI自动提取的关键词标签(JSON数组)',
     case_level TINYINT DEFAULT 3 COMMENT '紧急程度: 1-特急 2-紧急 3-一般 4-普通',
     case_source TINYINT NOT NULL COMMENT '来源: 1-自助终端 2-小程序 3-电话 4-窗口 5-转办',
     channel_id VARCHAR(64) DEFAULT '' COMMENT '渠道终端ID',
@@ -180,8 +181,25 @@ CREATE TABLE IF NOT EXISTS dispute_case (
     INDEX idx_created_at(created_at),
     INDEX idx_case_level(case_level),
     INDEX idx_case_source(case_source),
-    INDEX idx_location(longitude, latitude)
+    INDEX idx_location(longitude, latitude),
+    INDEX idx_keywords ((CAST(keywords AS CHAR(512) ARRAY)))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='纠纷案件主表';
+
+-- 6a. 纠纷关键词词典表
+CREATE TABLE IF NOT EXISTS dispute_keyword_dict (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT COMMENT '主键',
+    keyword VARCHAR(64) NOT NULL COMMENT '关键词',
+    category VARCHAR(32) DEFAULT NULL COMMENT '关键词分类(纠纷性质/行为/对象/程度)',
+    frequency INT NOT NULL DEFAULT 1 COMMENT '出现频次',
+    source_type VARCHAR(16) NOT NULL DEFAULT 'ai' COMMENT '来源类型 ai/manual',
+    status TINYINT NOT NULL DEFAULT 1 COMMENT '1启用 0禁用',
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    UNIQUE KEY uk_keyword (keyword),
+    INDEX idx_category (category),
+    INDEX idx_frequency (frequency DESC),
+    INDEX idx_status (status)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='纠纷关键词词典';
 
 -- 7. 证据材料表
 CREATE TABLE IF NOT EXISTS dispute_evidence (

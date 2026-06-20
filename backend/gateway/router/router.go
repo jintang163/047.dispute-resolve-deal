@@ -202,6 +202,7 @@ func RegisterRoutes(h *app.Hertz) {
 			stats.GET("/organization", handler.GetOrganizationStats)
 			stats.GET("/yearly-comparison", handler.GetYearlyComparison)
 			stats.GET("/mediator-ranking", handler.GetMediatorRanking)
+			stats.GET("/keywords/aggregation", handler.GetKeywordStats)
 			stats.POST("/refresh-cache", handler.RefreshStatsCache)
 		}
 

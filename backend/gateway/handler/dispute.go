@@ -127,6 +127,7 @@ func GetDisputeList(ctx context.Context, c *app.RequestContext) {
 		if level, ok := item["case_level"].(int32); ok {
 			item["case_level_name"] = constants.CaseLevelMap[int(level)]
 		}
+		parseKeywordsJSON(item)
 	}
 
 	c.JSON(http.StatusOK, response.Page(list, total, req.Page, req.PageSize))
@@ -164,6 +165,7 @@ func GetDisputeDetail(ctx context.Context, c *app.RequestContext) {
 	if level, ok := caseData["case_level"].(int32); ok {
 		caseData["case_level_name"] = constants.CaseLevelMap[int(level)]
 	}
+	parseKeywordsJSON(caseData)
 
 	var evidence []map[string]interface{}
 	database.GetDB().Table("dispute_evidence").
@@ -693,4 +695,36 @@ func autoExtractKeywords(title, description string, typeID int64) []string {
 	}
 
 	return keywords
+}
+
+func parseKeywordsJSON(item map[string]interface{}) {
+	if item == nil {
+		return
+	}
+	raw, exists := item["keywords"]
+	if !exists || raw == nil {
+		return
+	}
+
+	var result []string
+	switch v := raw.(type) {
+	case []byte:
+		if len(v) == 0 || string(v) == "null" {
+			return
+		}
+		if err := json.Unmarshal(v, &result); err == nil {
+			item["keywords"] = result
+		}
+	case string:
+		if v == "" || v == "null" {
+			return
+		}
+		if err := json.Unmarshal([]byte(v), &result); err == nil {
+			item["keywords"] = result
+		}
+	case []interface{}:
+		item["keywords"] = v
+	case []string:
+		item["keywords"] = v
+	}
 }
