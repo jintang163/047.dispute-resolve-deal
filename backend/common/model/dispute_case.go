@@ -44,6 +44,15 @@ type DisputeCase struct {
 	CreatedFrom      int        `json:"createdFrom"`
 	Remark           string     `gorm:"size:500" json:"remark"`
 
+	MediatorTime       *time.Time `json:"mediatorTime"`
+	MediationStartTime *time.Time `json:"mediationStartTime"`
+	MediationEndTime   *time.Time `json:"mediationEndTime"`
+	UrgencyTime        *time.Time `json:"urgencyTime"`
+	UrgencyCount       int        `json:"urgencyCount"`
+	EscalateLevel      int32      `gorm:"default:0" json:"escalateLevel"`
+	EscalateTime       *time.Time `json:"escalateTime"`
+	LastProgressTime   *time.Time `json:"lastProgressTime"`
+
 	OrgID   int64  `gorm:"-" json:"orgId"`
 	OrgName string `gorm:"-" json:"orgName"`
 }

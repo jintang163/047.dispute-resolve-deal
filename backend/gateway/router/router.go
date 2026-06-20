@@ -75,6 +75,7 @@ func RegisterRoutes(h *app.Hertz) {
 			dispute.POST("/:id/urge", handler.UrgeDispute)
 			dispute.POST("/:id/status", handler.UpdateDisputeStatus)
 			dispute.GET("/:id/history", handler.GetDisputeHistory)
+			dispute.GET("/:id/escalations", handler.GetCaseEscalationListHandler)
 
 			evidence := dispute.Group("/:id/evidence")
 			{
@@ -257,6 +258,19 @@ func RegisterRoutes(h *app.Hertz) {
 			improvement.POST("/:id/rectify", handler.SubmitRectificationHandler)
 			improvement.POST("/:id/review", handler.ReviewRectificationHandler)
 			improvement.POST("/:id/close", handler.CloseImprovementOrderHandler)
+		}
+
+		escalation := userAuth.Group("/escalation")
+		{
+			escalation.GET("", handler.GetEscalationListHandler)
+			escalation.GET("/:id", handler.GetEscalationDetailHandler)
+			escalation.POST("/:id/handle", handler.HandleEscalationHandler)
+			escalation.POST("/:id/close", handler.CloseEscalationHandler)
+		}
+
+		urge := userAuth.Group("/urge")
+		{
+			urge.GET("/case/:caseId", handler.GetCaseUrgeListHandler)
 		}
 
 		ws := userAuth.Group("/ws")

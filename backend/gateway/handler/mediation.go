@@ -108,18 +108,20 @@ func CreateMediationRecord(ctx context.Context, c *app.RequestContext) {
 	tx := database.GetDB().Begin()
 	tx.Table("dispute_mediation_record").Create(record)
 
+	progressUpdates := map[string]interface{}{
+		"last_progress_time": time.Now(),
+	}
+
 	if req.Result > 0 {
-		updates := map[string]interface{}{
-			"mediation_result": req.Result,
-		}
+		progressUpdates["mediation_result"] = req.Result
 		if req.AgreementContent != "" {
-			updates["agreement_content"] = req.AgreementContent
+			progressUpdates["agreement_content"] = req.AgreementContent
 		}
 		if req.Result == constants.MediationResultSuccess {
-			updates["mediation_end_time"] = time.Now()
+			progressUpdates["mediation_end_time"] = time.Now()
 		}
-		tx.Table("dispute_case").Where("id = ?", caseID).Updates(updates)
 	}
+	tx.Table("dispute_case").Where("id = ?", caseID).Updates(progressUpdates)
 
 	history := map[string]interface{}{
 		"case_id":       caseID,

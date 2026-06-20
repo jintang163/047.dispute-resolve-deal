@@ -404,6 +404,7 @@ func AssignDispute(ctx context.Context, c *app.RequestContext) {
 		"mediator_time": now,
 		"status":        constants.CaseStatusMediating,
 		"mediation_start_time": now,
+		"last_progress_time":  now,
 	}
 
 	tx := database.GetDB().Begin()
@@ -633,7 +634,10 @@ func UpdateDisputeStatus(ctx context.Context, c *app.RequestContext) {
 
 	database.GetDB().Table("dispute_case").
 		Where("id = ?", id).
-		Update("status", req.Status)
+		Updates(map[string]interface{}{
+			"status":             req.Status,
+			"last_progress_time": time.Now(),
+		})
 
 	history := map[string]interface{}{
 		"case_id":       id,

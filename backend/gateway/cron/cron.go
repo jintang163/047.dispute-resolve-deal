@@ -36,6 +36,8 @@ const (
 	LockExpireJudicial  = 600 * time.Second
 	LockExpireCallback  = 600 * time.Second
 	LockExpireSentiment = 600 * time.Second
+	LockExpireTimeoutUrge = 600 * time.Second
+	LockExpireTimeoutEscalate = 600 * time.Second
 )
 
 func StartCronTasks() {
@@ -62,6 +64,9 @@ func StartCronTasks() {
 		addCronTask("0 0 */6 * * ?", checkCallbackCallResultTask, "check_callback_call_result")
 		addCronTask("0 0 2 * * ?", cleanExpiredRecordingsTask, "clean_expired_recordings")
 		addCronTask("0 */30 * * * ?", satisfactionSentimentAnalysisTask, "satisfaction_sentiment_analysis")
+		addCronTask("0 0 * * * ?", urgePendingTimeoutCasesTask, "urge_pending_timeout_cases")
+		addCronTask("0 0 * * * ?", urgeMediatingTimeoutCasesTask, "urge_mediating_timeout_cases")
+		addCronTask("0 30 * * * ?", escalateUrgedTimeoutCasesTask, "escalate_urged_timeout_cases")
 
 		cronInstance.Start()
 		logger.Info("All cron tasks started", zap.Int("taskCount", len(entryIDs)))
@@ -1180,4 +1185,85 @@ func satisfactionSentimentAnalysisTask() {
 
 	elapsed := time.Since(startTime)
 	logger.Info("Satisfaction sentiment analysis task completed", zap.Duration("elapsed", elapsed))
+}
+
+func urgePendingTimeoutCasesTask() {
+	ctx := context.Background()
+	lockKey := constants.RedisKeyPrefixLock + "cron:urge_pending_timeout"
+
+	locked, err := acquireLock(ctx, lockKey, LockExpireTimeoutUrge)
+	if err != nil || !locked {
+		logger.Debug("Skip urge pending timeout task, lock not acquired")
+		return
+	}
+	defer releaseLock(ctx, lockKey)
+
+	logger.Info("Starting urge pending timeout cases task")
+	startTime := time.Now()
+
+	urgeService := service.TimeoutUrgeServiceInst()
+	count, err := urgeService.DetectAndUrgePendingCases(ctx)
+	if err != nil {
+		logger.Error("Urge pending timeout cases failed", logger.Error(err))
+	}
+
+	elapsed := time.Since(startTime)
+	logger.Info("Urge pending timeout cases task completed",
+		zap.Int("urgedCount", count),
+		zap.Duration("elapsed", elapsed),
+	)
+}
+
+func urgeMediatingTimeoutCasesTask() {
+	ctx := context.Background()
+	lockKey := constants.RedisKeyPrefixLock + "cron:urge_mediating_timeout"
+
+	locked, err := acquireLock(ctx, lockKey, LockExpireTimeoutUrge)
+	if err != nil || !locked {
+		logger.Debug("Skip urge mediating timeout task, lock not acquired")
+		return
+	}
+	defer releaseLock(ctx, lockKey)
+
+	logger.Info("Starting urge mediating timeout cases task")
+	startTime := time.Now()
+
+	urgeService := service.TimeoutUrgeServiceInst()
+	count, err := urgeService.DetectAndUrgeMediatingCases(ctx)
+	if err != nil {
+		logger.Error("Urge mediating timeout cases failed", logger.Error(err))
+	}
+
+	elapsed := time.Since(startTime)
+	logger.Info("Urge mediating timeout cases task completed",
+		zap.Int("urgedCount", count),
+		zap.Duration("elapsed", elapsed),
+	)
+}
+
+func escalateUrgedTimeoutCasesTask() {
+	ctx := context.Background()
+	lockKey := constants.RedisKeyPrefixLock + "cron:escalate_urged_timeout"
+
+	locked, err := acquireLock(ctx, lockKey, LockExpireTimeoutEscalate)
+	if err != nil || !locked {
+		logger.Debug("Skip escalate urged timeout task, lock not acquired")
+		return
+	}
+	defer releaseLock(ctx, lockKey)
+
+	logger.Info("Starting escalate urged timeout cases task")
+	startTime := time.Now()
+
+	urgeService := service.TimeoutUrgeServiceInst()
+	count, err := urgeService.DetectAndEscalateUrgedCases(ctx)
+	if err != nil {
+		logger.Error("Escalate urged timeout cases failed", logger.Error(err))
+	}
+
+	elapsed := time.Since(startTime)
+	logger.Info("Escalate urged timeout cases task completed",
+		zap.Int("escalatedCount", count),
+		zap.Duration("elapsed", elapsed),
+	)
 }

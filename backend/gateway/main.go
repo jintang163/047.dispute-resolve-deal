@@ -91,6 +91,7 @@ func main() {
 
 	service.InitCallbackService()
 	service.InitSatisfactionService()
+	service.InitTimeoutUrgeService()
 
 	cron.StartCronTasks()
 
