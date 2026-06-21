@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"path/filepath"
 	"strconv"
@@ -12,6 +13,7 @@ import (
 
 	common "github.com/dispute-resolve/common/model"
 	"github.com/dispute-resolve/common/cache"
+	"github.com/dispute-resolve/common/config"
 	"github.com/dispute-resolve/common/constants"
 	"github.com/dispute-resolve/common/database"
 	"github.com/dispute-resolve/common/logger"
@@ -21,6 +23,7 @@ import (
 	"github.com/dispute-resolve/gateway/middleware"
 
 	"github.com/cloudwego/hertz/pkg/app"
+	"github.com/minio/minio-go/v7"
 )
 
 type EvidenceUploadRequest struct {
@@ -111,7 +114,7 @@ func UploadEvidence(ctx context.Context, c *app.RequestContext) {
 
 	evidenceID := utils.GenerateID()
 
-	classifyResult := ClassifyEvidenceByFileName(file.Filename, fileType)
+	classifyResult := ClassifyEvidenceByContent(file.Filename, fileType, fileContent)
 
 	evidence := map[string]interface{}{
 		"id":                 evidenceID,
@@ -479,7 +482,13 @@ func UpdateEvidenceRemark(ctx context.Context, c *app.RequestContext) {
 }
 
 func UpdateEvidenceCategory(ctx context.Context, c *app.RequestContext) {
-	id, _ := strconv.ParseInt(c.Param("id"), 10, 64)
+	caseID, _ := strconv.ParseInt(c.Param("id"), 10, 64)
+	evidenceID, _ := strconv.ParseInt(c.Param("evidenceId"), 10, 64)
+
+	if evidenceID == 0 {
+		c.JSON(http.StatusBadRequest, response.BadRequest("证据ID不能为空"))
+		return
+	}
 
 	var req struct {
 		Category int `json:"category" binding:"required"`
@@ -497,17 +506,48 @@ func UpdateEvidenceCategory(ctx context.Context, c *app.RequestContext) {
 	userInfo := middleware.GetUserInfo(c)
 
 	var evidence struct {
-		CaseID     int64 `gorm:"column:case_id"`
-		UploaderID int64 `gorm:"column:uploader_id"`
+		ID         int64  `gorm:"column:id"`
+		CaseID     int64  `gorm:"column:case_id"`
+		CaseNo     string `gorm:"column:case_no"`
+		FileName   string `gorm:"column:file_name"`
+		UploaderID int64  `gorm:"column:uploader_id"`
 	}
-	database.GetDB().Table("dispute_evidence").
-		Where("id = ?", id).
+	result := database.GetDB().Table("dispute_evidence").
+		Select("id, case_id, case_no, file_name, uploader_id").
+		Where("id = ? AND deleted_at IS NULL", evidenceID).
 		First(&evidence)
+
+	if result.Error != nil {
+		c.JSON(http.StatusNotFound, response.NotFound("证据不存在"))
+		return
+	}
+
+	if caseID > 0 && evidence.CaseID != caseID {
+		c.JSON(http.StatusBadRequest, response.BadRequest("证据与案件不匹配，禁止修改"))
+		return
+	}
 
 	if evidence.UploaderID != userInfo.UserID && userInfo.Role > constants.RoleLeader {
 		c.JSON(http.StatusForbidden, response.Forbidden("无权限修改此证据类别"))
 		return
 	}
+
+	oldCategoryName := ""
+	var oldCat int
+	var ecRow struct {
+		Ecat int `gorm:"column:evidence_category"`
+		Mcat int `gorm:"column:manual_category"`
+	}
+	database.GetDB().Table("dispute_evidence").
+		Select("evidence_category, manual_category").
+		Where("id = ?", evidenceID).
+		Scan(&ecRow)
+	if ecRow.Mcat > 0 {
+		oldCat = ecRow.Mcat
+	} else {
+		oldCat = ecRow.Ecat
+	}
+	oldCategoryName = GetEvidenceCategoryName(oldCat)
 
 	now := time.Now()
 	updates := map[string]interface{}{
@@ -518,10 +558,10 @@ func UpdateEvidenceCategory(ctx context.Context, c *app.RequestContext) {
 	}
 
 	if err := database.GetDB().Table("dispute_evidence").
-		Where("id = ?", id).
+		Where("id = ?", evidenceID).
 		Updates(updates).Error; err != nil {
 		logger.Error("Update evidence category failed",
-			logger.Int64("evidenceId", id),
+			logger.Int64("evidenceId", evidenceID),
 			logger.Error(err))
 		c.JSON(http.StatusInternalServerError, response.ServerError("更新失败"))
 		return
@@ -533,28 +573,32 @@ func UpdateEvidenceCategory(ctx context.Context, c *app.RequestContext) {
 
 		history := map[string]interface{}{
 			"case_id":          evidence.CaseID,
+			"case_no":          evidence.CaseNo,
 			"operation_type":   "EVIDENCE_CATEGORY_UPDATE",
-			"operation_detail": fmt.Sprintf("修正证据类别: %s → %s",
-				c.Param("id"), GetEvidenceCategoryName(req.Category)),
+			"operation_detail": fmt.Sprintf("修正证据类别: %s(%s) → %s",
+				evidence.FileName, oldCategoryName, GetEvidenceCategoryName(req.Category)),
 			"operator_id":      userInfo.UserID,
 			"operator_name":    userInfo.RealName,
+			"created_at":       now,
 		}
-		var caseNo string
-		database.GetDB().Table("dispute_case").
-			Select("case_no").Where("id = ?", evidence.CaseID).Scan(&caseNo)
-		history["case_no"] = caseNo
 		database.GetDB().Table("dispute_case_history").Create(history)
 	}
 
 	logger.Info("Evidence category manually updated",
-		logger.Int64("evidenceId", id),
+		logger.Int64("caseId", caseID),
+		logger.Int64("evidenceId", evidenceID),
+		logger.Int("oldCategory", oldCat),
 		logger.Int("newCategory", req.Category),
 		logger.String("categoryName", GetEvidenceCategoryName(req.Category)),
 		logger.Int64("operatorId", userInfo.UserID))
 
 	c.JSON(http.StatusOK, response.SuccessWithMessage(map[string]interface{}{
-		"category":     req.Category,
-		"categoryName": GetEvidenceCategoryName(req.Category),
+		"evidenceId":      evidenceID,
+		"oldCategory":     oldCat,
+		"oldCategoryName": oldCategoryName,
+		"category":        req.Category,
+		"categoryName":    GetEvidenceCategoryName(req.Category),
+		"fileName":        evidence.FileName,
 	}, "类别修正成功"))
 }
 
@@ -704,21 +748,409 @@ func ClassifyEvidenceByFileName(fileName string, fileType int32) EvidenceClassif
 func ClassifyEvidenceByContent(fileName string, fileType int32, fileContent []byte) EvidenceClassifyResult {
 	result := ClassifyEvidenceByFileName(fileName, fileType)
 
-	if fileType == constants.FileTypeImage && len(fileContent) > 0 {
-		fileSize := len(fileContent)
-		if fileSize > 500*1024 {
-			if result.Category == constants.EvidenceCategoryPhoto {
-				result.Confidence = result.Confidence*0.7 + 0.3
-				result.Keywords = result.Keywords + ",large_image"
+	contentLen := len(fileContent)
+	if contentLen == 0 {
+		return result
+	}
+
+	var contentKeywords []string
+
+	switch fileType {
+	case constants.FileTypeImage:
+		imgFeatures := analyzeImageContent(fileContent)
+		if imgFeatures.width > 0 {
+			result.Keywords = result.Keywords + ",w" + strconv.Itoa(imgFeatures.width) + "h" + strconv.Itoa(imgFeatures.height)
+			contentKeywords = append(contentKeywords, "resolution:"+strconv.Itoa(imgFeatures.width)+"x"+strconv.Itoa(imgFeatures.height))
+
+			if imgFeatures.width >= 2000 && imgFeatures.height >= 2000 {
+				contentKeywords = append(contentKeywords, "high_resolution_scan")
+				if result.Category == constants.EvidenceCategoryIDCard || result.Category == constants.EvidenceCategoryCertificate ||
+					result.Category == constants.EvidenceCategoryContract || result.Category == constants.EvidenceCategoryReceipt ||
+					result.Category == constants.EvidenceCategoryInvoice {
+					result.Confidence = math.Min(1.0, result.Confidence*0.85+0.15)
+				}
+			}
+
+			if imgFeatures.width >= 1000 && imgFeatures.height >= 700 &&
+				(result.Category == constants.EvidenceCategoryPhoto || result.Category == constants.EvidenceCategoryChatRecord) {
+				aspectRatio := float64(imgFeatures.width) / float64(imgFeatures.height)
+				if (aspectRatio >= 0.7 && aspectRatio <= 1.8) &&
+					(result.Category == constants.EvidenceCategoryPhoto) {
+					contentKeywords = append(contentKeywords, "scenery_photo")
+					result.Confidence = math.Min(1.0, result.Confidence*0.9+0.1)
+				}
+				if (aspectRatio >= 0.4 && aspectRatio <= 0.8) &&
+					(result.Category == constants.EvidenceCategoryChatRecord || result.Category == constants.EvidenceCategoryUncategorized) {
+					result.Category = constants.EvidenceCategoryChatRecord
+					contentKeywords = append(contentKeywords, "phone_screenshot_vertical")
+					result.Confidence = math.Max(result.Confidence, 0.75)
+				}
 			}
 		}
 
-		if len(result.MatchedRules) > 0 && result.Confidence < 0.8 {
-			result.Confidence = result.Confidence*0.8 + 0.16
+		if imgFeatures.isHighContrast {
+			contentKeywords = append(contentKeywords, "document_like")
+			if result.Category == constants.EvidenceCategoryPhoto || result.Category == constants.EvidenceCategoryUncategorized {
+				if imgFeatures.colorVariance < 30.0 {
+					result.Category = constants.EvidenceCategoryContract
+					contentKeywords = append(contentKeywords, "scanned_document")
+					result.Confidence = math.Max(result.Confidence, 0.6)
+				}
+			}
+		}
+
+		if imgFeatures.hasTextRegions {
+			contentKeywords = append(contentKeywords, "text_dense")
+			if result.Category == constants.EvidenceCategoryPhoto {
+				if imgFeatures.colorVariance < 25.0 {
+					result.Category = constants.EvidenceCategoryReceipt
+					contentKeywords = append(contentKeywords, "receipt_like")
+					result.Confidence = math.Max(result.Confidence, 0.7)
+				}
+			}
+		}
+
+		if contentLen > 2*1024*1024 {
+			contentKeywords = append(contentKeywords, "large_image")
+			if result.Category == constants.EvidenceCategoryPhoto {
+				result.Confidence = math.Min(1.0, result.Confidence*0.85+0.15)
+			}
+		}
+
+	case constants.FileTypeDocument:
+		docFeatures := analyzeDocumentContent(fileContent, fileName)
+		if docFeatures.pageCount > 0 {
+			contentKeywords = append(contentKeywords, "pages:"+strconv.Itoa(docFeatures.pageCount))
+			result.Keywords = result.Keywords + ",pages:" + strconv.Itoa(docFeatures.pageCount)
+			if docFeatures.pageCount >= 3 && result.Category == constants.EvidenceCategoryOther {
+				result.Category = constants.EvidenceCategoryContract
+				contentKeywords = append(contentKeywords, "multi_page_contract")
+				result.Confidence = math.Max(result.Confidence, 0.55)
+			}
+			if docFeatures.pageCount == 1 && result.Category == constants.EvidenceCategoryOther {
+				result.Category = constants.EvidenceCategoryReceipt
+				contentKeywords = append(contentKeywords, "single_page_voucher")
+				result.Confidence = math.Max(result.Confidence, 0.5)
+			}
+		}
+		if docFeatures.hasTable {
+			contentKeywords = append(contentKeywords, "has_table")
+			if result.Category == constants.EvidenceCategoryOther {
+				result.Category = constants.EvidenceCategoryInvoice
+				result.Confidence = math.Max(result.Confidence, 0.6)
+			}
+		}
+
+	case constants.FileTypeAudio:
+		audioFeatures := analyzeAudioContent(fileContent)
+		if audioFeatures.durationSeconds > 0 {
+			durationMin := audioFeatures.durationSeconds / 60
+			contentKeywords = append(contentKeywords, "duration:"+strconv.Itoa(durationMin)+"min")
+			result.Keywords = result.Keywords + ",duration:" + strconv.Itoa(durationMin) + "min"
+			if durationMin >= 10 {
+				contentKeywords = append(contentKeywords, "long_conversation")
+				if result.Category == constants.EvidenceCategoryOther || result.Category == constants.EvidenceCategoryMedia {
+					result.Category = constants.EvidenceCategoryMedia
+					result.Confidence = math.Min(1.0, result.Confidence+0.2)
+				}
+			}
+		}
+		if audioFeatures.sampleRate >= 44100 {
+			contentKeywords = append(contentKeywords, "hq_audio")
+			result.Confidence = math.Min(1.0, result.Confidence+0.05)
+		}
+
+	case constants.FileTypeVideo:
+		videoFeatures := analyzeVideoContent(fileContent)
+		if videoFeatures.durationSeconds > 0 {
+			durationMin := videoFeatures.durationSeconds / 60
+			contentKeywords = append(contentKeywords, "duration:"+strconv.Itoa(durationMin)+"min")
+			result.Keywords = result.Keywords + ",duration:" + strconv.Itoa(durationMin) + "min"
+			if durationMin >= 5 {
+				contentKeywords = append(contentKeywords, "site_video")
+				if result.Category == constants.EvidenceCategoryOther {
+					result.Category = constants.EvidenceCategoryPhoto
+					result.Confidence = math.Max(result.Confidence, 0.6)
+				}
+			}
+		}
+		if videoFeatures.resolutionWidth >= 1920 {
+			contentKeywords = append(contentKeywords, "hd_video")
+			result.Confidence = math.Min(1.0, result.Confidence+0.05)
 		}
 	}
 
+	if len(contentKeywords) > 0 {
+		existing := ""
+		if result.Keywords != "" {
+			existing = result.Keywords + ","
+		}
+		result.Keywords = existing + strings.Join(contentKeywords, ",")
+	}
+
+	result.Confidence = math.Max(0.1, math.Min(1.0, result.Confidence))
 	return result
+}
+
+type imageContentFeatures struct {
+	width           int
+	height          int
+	colorVariance   float64
+	isHighContrast  bool
+	hasTextRegions  bool
+	averageGray     float64
+}
+
+func analyzeImageContent(data []byte) imageContentFeatures {
+	f := imageContentFeatures{}
+
+	if len(data) < 8 {
+		return f
+	}
+
+	isJPEG := data[0] == 0xFF && data[1] == 0xD8
+	isPNG := len(data) >= 8 &&
+		data[0] == 0x89 && data[1] == 0x50 && data[2] == 0x4E && data[3] == 0x47
+
+	if isJPEG {
+		pos := 2
+		for pos < len(data)-10 {
+			if data[pos] != 0xFF {
+				pos++
+				continue
+			}
+			marker := data[pos+1]
+			if marker >= 0xC0 && marker <= 0xCF && marker != 0xC4 && marker != 0xC8 && marker != 0xCC {
+				if pos+9 < len(data) {
+					f.height = int(data[pos+5])<<8 | int(data[pos+6])
+					f.width = int(data[pos+7])<<8 | int(data[pos+8])
+				}
+				break
+			}
+			if pos+4 < len(data) {
+				segLen := int(data[pos+2])<<8 | int(data[pos+3])
+				if segLen < 2 {
+					break
+				}
+				pos += 2 + segLen
+			} else {
+				break
+			}
+		}
+	} else if isPNG {
+		if len(data) >= 24 {
+			f.width = int(data[16])<<24 | int(data[17])<<16 | int(data[18])<<8 | int(data[19])
+			f.height = int(data[20])<<24 | int(data[21])<<16 | int(data[22])<<8 | int(data[23])
+		}
+	}
+
+	sampleStep := 256
+	if len(data) > 100000 {
+		sampleStep = len(data) / 2000
+	}
+	var graySamples []float64
+	sampleCount := 0
+	for i := 100; i < len(data)-3 && sampleCount < 5000; i += sampleStep {
+		r := int(data[i])
+		g := int(data[i+1])
+		b := int(data[i+2])
+		gray := 0.299*float64(r) + 0.587*float64(g) + 0.114*float64(b)
+		graySamples = append(graySamples, gray)
+		sampleCount++
+	}
+
+	if len(graySamples) > 10 {
+		var sum float64
+		for _, g := range graySamples {
+			sum += g
+		}
+		f.averageGray = sum / float64(len(graySamples))
+
+		var varianceSum float64
+		for _, g := range graySamples {
+			diff := g - f.averageGray
+			varianceSum += diff * diff
+		}
+		f.colorVariance = math.Sqrt(varianceSum / float64(len(graySamples)))
+
+		brightCount := 0
+		darkCount := 0
+		for _, g := range graySamples {
+			if g > 220 {
+				brightCount++
+			}
+			if g < 40 {
+				darkCount++
+			}
+		}
+		ratio := float64(brightCount+darkCount) / float64(len(graySamples))
+		f.isHighContrast = ratio > 0.5 || f.colorVariance > 50
+
+		textIndicator := 0
+		for i := 1; i < len(graySamples); i++ {
+			diff := math.Abs(graySamples[i] - graySamples[i-1])
+			if diff > 50 {
+				textIndicator++
+			}
+		}
+		f.hasTextRegions = float64(textIndicator)/float64(len(graySamples)) > 0.08
+	}
+
+	return f
+}
+
+type documentContentFeatures struct {
+	pageCount int
+	hasTable  bool
+	fileSize  int
+}
+
+func analyzeDocumentContent(data []byte, fileName string) documentContentFeatures {
+	f := documentContentFeatures{fileSize: len(data)}
+	ext := strings.ToLower(filepath.Ext(fileName))
+
+	switch ext {
+	case ".pdf":
+		if len(data) > 50 {
+			content := string(data)
+			pageMarkers := strings.Count(content, "/Type /Page")
+			pageTree := strings.Count(content, "/Type /Pages")
+			f.pageCount = pageMarkers - pageTree
+			if f.pageCount <= 0 {
+				f.pageCount = len(data) / (50 * 1024)
+				if f.pageCount < 1 {
+					f.pageCount = 1
+				}
+			}
+			f.hasTable = strings.Contains(content, "/Table") || strings.Contains(content, "TABLE")
+		}
+	case ".doc", ".docx":
+		f.pageCount = len(data) / (30 * 1024)
+		if f.pageCount < 1 {
+			f.pageCount = 1
+		}
+		content := strings.ToLower(string(data))
+		f.hasTable = strings.Contains(content, "table") || strings.Contains(content, "<w:tbl")
+	case ".xls", ".xlsx":
+		f.hasTable = true
+		f.pageCount = 1
+	case ".txt":
+		lines := strings.Count(string(data), "\n")
+		f.pageCount = lines / 50
+		if f.pageCount < 1 {
+			f.pageCount = 1
+		}
+	}
+
+	return f
+}
+
+type audioContentFeatures struct {
+	durationSeconds int
+	sampleRate      int
+	channels        int
+}
+
+func analyzeAudioContent(data []byte) audioContentFeatures {
+	f := audioContentFeatures{}
+	dataLen := len(data)
+	if dataLen < 12 {
+		return f
+	}
+
+	header := string(data[:4])
+	switch header {
+	case "RIFF":
+		if dataLen > 28 {
+			f.sampleRate = int(data[24]) | int(data[25])<<8 | int(data[26])<<16 | int(data[27])<<24
+			if dataLen > 40 && f.sampleRate > 0 {
+				audioSize := int(data[40]) | int(data[41])<<8 | int(data[42])<<16 | int(data[43])<<24
+				if dataLen > 34 {
+					channels := int(data[22]) | int(data[23])<<8
+					bitsPerSample := int(data[34]) | int(data[35])<<8
+					if channels == 0 {
+						channels = 2
+					}
+					if bitsPerSample == 0 {
+						bitsPerSample = 16
+					}
+					blockAlign := channels * bitsPerSample / 8
+					if blockAlign > 0 && f.sampleRate > 0 {
+						f.durationSeconds = audioSize / (f.sampleRate * blockAlign)
+					}
+					f.channels = channels
+				}
+			}
+		}
+	default:
+		kbps := 128
+		if dataLen > 0 {
+			f.durationSeconds = (dataLen * 8) / (kbps * 1000)
+		}
+	}
+
+	if f.sampleRate == 0 {
+		f.sampleRate = 44100
+	}
+	return f
+}
+
+type videoContentFeatures struct {
+	durationSeconds  int
+	resolutionWidth  int
+	resolutionHeight int
+	bitrate          int
+}
+
+func analyzeVideoContent(data []byte) videoContentFeatures {
+	f := videoContentFeatures{}
+	dataLen := len(data)
+	if dataLen < 12 {
+		return f
+	}
+
+	header := string(data[:4])
+	switch header {
+	default:
+		if strings.Contains(string(data[:min(200, dataLen)]), "ftyp") {
+			f.resolutionWidth = 1920
+			f.resolutionHeight = 1080
+		} else {
+			f.resolutionWidth = 1280
+			f.resolutionHeight = 720
+		}
+	}
+
+	bitrateKbps := 4000
+	if dataLen > 0 && bitrateKbps > 0 {
+		f.durationSeconds = (dataLen * 8) / (bitrateKbps * 1000)
+	}
+	f.bitrate = bitrateKbps
+	return f
+}
+
+func readFileFromMinIO(ctx context.Context, filePath string) ([]byte, error) {
+	client := database.GetMinioClient()
+	if client == nil {
+		return nil, fmt.Errorf("minio client not initialized")
+	}
+
+	cfg := config.GetConfig()
+	if cfg == nil {
+		return nil, fmt.Errorf("config not initialized")
+	}
+
+	obj, err := client.GetObject(ctx, cfg.MinIO.Bucket, filePath, minio.GetObjectOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("get object failed: %w", err)
+	}
+	defer obj.Close()
+
+	data, err := io.ReadAll(obj)
+	if err != nil {
+		return nil, fmt.Errorf("read object failed: %w", err)
+	}
+	return data, nil
 }
 
 func GetEvidenceCategoryName(category int) string {
@@ -738,9 +1170,12 @@ func ProcessEvidenceAIClassify(ctx context.Context, evidenceID int64, filePath s
 		AICategory       int     `gorm:"column:ai_category"`
 		AIConfidence     float64 `gorm:"column:ai_confidence"`
 		AIKeywords       string  `gorm:"column:ai_keywords"`
+		FileName         string  `gorm:"column:file_name"`
+		FileType         int32   `gorm:"column:file_type"`
+		FilePath         string  `gorm:"column:file_path"`
 	}
 	err := db.Table("dispute_evidence").
-		Select("evidence_category, ai_category, ai_confidence, ai_keywords").
+		Select("evidence_category, ai_category, ai_confidence, ai_keywords, file_name, file_type, file_path").
 		Where("id = ?", evidenceID).
 		Scan(&existingData).Error
 	if err != nil {
@@ -750,15 +1185,36 @@ func ProcessEvidenceAIClassify(ctx context.Context, evidenceID int64, filePath s
 		return err
 	}
 
-	classifyResult := ClassifyEvidenceByFileName(fileName, fileType)
+	if existingData.FileName != "" {
+		fileName = existingData.FileName
+	}
+	if existingData.FileType > 0 {
+		fileType = existingData.FileType
+	}
+	if existingData.FilePath != "" {
+		filePath = existingData.FilePath
+	}
+
+	var classifyResult EvidenceClassifyResult
+	fileContent, readErr := readFileFromMinIO(ctx, filePath)
+	if readErr != nil {
+		logger.Warn("Read file from MinIO for AI classify failed, fallback to filename only",
+			logger.Int64("evidenceId", evidenceID),
+			logger.String("filePath", filePath),
+			logger.Error(readErr))
+		classifyResult = ClassifyEvidenceByFileName(fileName, fileType)
+	} else {
+		classifyResult = ClassifyEvidenceByContent(fileName, fileType, fileContent)
+	}
 
 	if existingData.EvidenceCategory != constants.EvidenceCategoryUncategorized &&
+		existingData.EvidenceCategory != 0 &&
 		existingData.EvidenceCategory != classifyResult.Category {
 		classifyResult.Confidence = classifyResult.Confidence * 0.9
 	}
 
 	updates := map[string]interface{}{
-		"ai_processed":  constants.AIEvidenceProcessDone,
+		"ai_processed":   constants.AIEvidenceProcessDone,
 		"ai_processed_at": now,
 		"ai_category":    classifyResult.Category,
 		"ai_confidence":  classifyResult.Confidence,
@@ -788,7 +1244,8 @@ func ProcessEvidenceAIClassify(ctx context.Context, evidenceID int64, filePath s
 		logger.Int("category", classifyResult.Category),
 		logger.String("categoryName", GetEvidenceCategoryName(classifyResult.Category)),
 		logger.Float64("confidence", classifyResult.Confidence),
-		logger.String("keywords", classifyResult.Keywords))
+		logger.String("keywords", classifyResult.Keywords),
+		logger.Bool("fromMinIO", readErr == nil))
 
 	return nil
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
@@ -169,10 +170,95 @@ func GetDisputeDetail(ctx context.Context, c *app.RequestContext) {
 
 	var evidence []map[string]interface{}
 	database.GetDB().Table("dispute_evidence").
-		Where("case_id = ?", id).
-		Order("sort_order ASC, id DESC").
+		Where("case_id = ? AND deleted_at IS NULL", id).
+		Order("evidence_category ASC, sort_order ASC, id DESC").
 		Find(&evidence)
+
+	fileTypeMap := map[int]string{
+		constants.FileTypeImage:    "图片",
+		constants.FileTypeVideo:    "视频",
+		constants.FileTypeAudio:    "音频",
+		constants.FileTypeDocument: "文档",
+		constants.FileTypeOther:    "其他",
+	}
+
+	categoryCounts := make(map[int]int)
+	groupedEvidence := make(map[int][]map[string]interface{})
+
+	for i := range evidence {
+		item := evidence[i]
+
+		var cat int
+		if mcat, ok := item["manual_category"].(int); ok && mcat > 0 {
+			cat = mcat
+			item["category_name"] = GetEvidenceCategoryName(mcat)
+			item["is_manual_updated"] = true
+		} else if mcat, ok := item["manual_category"].(int64); ok && mcat > 0 {
+			cat = int(mcat)
+			item["category_name"] = GetEvidenceCategoryName(int(mcat))
+			item["is_manual_updated"] = true
+		} else if ecat, ok := item["evidence_category"].(int); ok {
+			cat = ecat
+			item["category_name"] = GetEvidenceCategoryName(ecat)
+		} else if ecat, ok := item["evidence_category"].(int64); ok {
+			cat = int(ecat)
+			item["category_name"] = GetEvidenceCategoryName(int(ecat))
+		} else {
+			cat = 0
+			item["category_name"] = GetEvidenceCategoryName(0)
+		}
+
+		if aicat, ok := item["ai_category"].(int); ok {
+			item["ai_category_name"] = GetEvidenceCategoryName(aicat)
+		} else if aicat, ok := item["ai_category"].(int64); ok {
+			item["ai_category_name"] = GetEvidenceCategoryName(int(aicat))
+		}
+
+		if ft, ok := item["file_type"].(int); ok {
+			item["file_type_name"] = fileTypeMap[ft]
+		} else if ft, ok := item["file_type"].(int64); ok {
+			item["file_type_name"] = fileTypeMap[int(ft)]
+		}
+
+		if size, ok := item["file_size"].(int64); ok {
+			item["file_size_format"] = formatFileSize(size)
+		}
+
+		categoryCounts[cat]++
+		if _, exists := groupedEvidence[cat]; !exists {
+			groupedEvidence[cat] = make([]map[string]interface{}, 0)
+		}
+		groupedEvidence[cat] = append(groupedEvidence[cat], item)
+	}
+
+	categoryStats := make([]map[string]interface{}, 0)
+	totalEvidence := len(evidence)
+	for category := 0; category <= 9; category++ {
+		if count, ok := categoryCounts[category]; ok && count > 0 {
+			categoryStats = append(categoryStats, map[string]interface{}{
+				"category":     category,
+				"categoryName": GetEvidenceCategoryName(category),
+				"count":        count,
+				"percentage":   math.Round(float64(count)/float64(totalEvidence)*10000) / 100,
+			})
+		}
+	}
+
+	evidenceGroups := make([]map[string]interface{}, 0)
+	for _, stat := range categoryStats {
+		cat := stat["category"].(int)
+		evidenceGroups = append(evidenceGroups, map[string]interface{}{
+			"category":     stat["category"],
+			"categoryName": stat["categoryName"],
+			"count":        stat["count"],
+			"list":         groupedEvidence[cat],
+		})
+	}
+
 	caseData["evidence"] = evidence
+	caseData["evidence_category_stats"] = categoryStats
+	caseData["evidence_groups"] = evidenceGroups
+	caseData["evidence_total"] = totalEvidence
 
 	var history []map[string]interface{}
 	database.GetDB().Table("dispute_case_history").
