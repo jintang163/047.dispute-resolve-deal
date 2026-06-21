@@ -58,6 +58,8 @@ func RegisterRoutes(h *app.Hertz) {
 		public.POST("/callback/aliyun-voice", handler.AliyunVoiceCallback)
 		public.POST("/idcard/query", handler.QueryPopulationByIDCard)
 		public.POST("/voice/recognize", handler.VoiceRecognize)
+		public.POST("/receipt/qrcode", handler.GenerateReceiptQRCode)
+		public.GET("/scan/:token", handler.ScanRedirect)
 	}
 
 	userAuth := api.Group("", middleware.JWTAuthMiddleware())

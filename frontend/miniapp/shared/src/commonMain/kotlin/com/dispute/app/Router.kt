@@ -24,6 +24,7 @@ sealed class Route {
     object CaseList : Route()
     data class CaseDetail(val caseNumber: String) : Route()
     object Progress : Route()
+    data class ScanProgress(val caseNo: String, val phone: String? = null) : Route()
     object AIConsult : Route()
     data class Satisfaction(val caseNumber: String) : Route()
     object Profile : Route()

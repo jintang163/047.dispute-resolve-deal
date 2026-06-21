@@ -23,6 +23,7 @@ import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -43,7 +44,7 @@ import com.dispute.app.model.Case
 import com.dispute.app.model.MockData
 
 @Composable
-fun ProgressPage() {
+fun ProgressPage(initialCaseNo: String = "", initialPhone: String? = null) {
     val appState = androidx.compose.runtime.remember { com.dispute.app.AppState() }
     val router = androidx.compose.runtime.remember { com.dispute.app.Router(appState) }
 
@@ -51,23 +52,43 @@ fun ProgressPage() {
         LocalAppState provides appState,
         LocalRouter provides router
     ) {
-        ProgressContent()
+        ProgressContent(initialCaseNo = initialCaseNo, initialPhone = initialPhone)
     }
 }
 
 @Composable
-private fun ProgressContent() {
+private fun ProgressContent(initialCaseNo: String = "", initialPhone: String? = null) {
     val appState = LocalAppState.current
     val router = LocalRouter.current
 
-    var caseNumberInput by remember { mutableStateOf("") }
-    var phoneInput by remember { mutableStateOf("") }
+    var caseNumberInput by remember { mutableStateOf(initialCaseNo) }
+    var phoneInput by remember { mutableStateOf(initialPhone ?: "") }
     var resultCase by remember { mutableStateOf<Case?>(null) }
     var showResult by remember { mutableStateOf(false) }
     var searchError by remember { mutableStateOf<String?>(null) }
+    var autoSearched by remember { mutableStateOf(false) }
 
     val recentCases = MockData.mockCases.take(3)
     val progress = resultCase?.let { MockData.mockProgress.filter { p -> p.caseNumber == it.caseNumber } }
+
+    LaunchedEffect(initialCaseNo) {
+        if (initialCaseNo.isNotBlank() && !autoSearched) {
+            autoSearched = true
+            appState.launchWithLoading {
+                kotlinx.coroutines.delay(500)
+                val found = MockData.mockCases.firstOrNull {
+                    it.caseNumber == initialCaseNo
+                }
+                if (found != null) {
+                    resultCase = found
+                    showResult = true
+                } else {
+                    searchError = "扫码跳转：案件编号 $initialCaseNo 暂未查询到结果，请确认编号是否正确"
+                    showResult = false
+                }
+            }
+        }
+    }
 
     Column(
         modifier = Modifier

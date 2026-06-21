@@ -72,6 +72,12 @@ class DisputeApi(private val client: ApiClient) {
         val response: ApiResponse<ReceiptData> = client.get("/api/case/receipt/$caseNumber")
         return response.getOrThrow()
     }
+
+    suspend fun getReceiptQRCode(caseNumber: String, phone: String = ""): ReceiptQRCodeResult {
+        val request = mapOf("caseNo" to caseNumber, "phone" to phone)
+        val response: ApiResponse<ReceiptQRCodeResult> = client.post("/api/v1/public/receipt/qrcode", request)
+        return response.getOrThrow()
+    }
 }
 
 @Serializable

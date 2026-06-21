@@ -50,7 +50,7 @@
       <div class="qr-section">
         <div class="qr-card">
           <div class="qr-header">
-            <h3>扫码查询进度 / 下载回执</h3>
+            <h3>微信扫码 · 查询进度 / 下载回执</h3>
           </div>
           <div class="qr-container">
             <img v-if="qrCodeUrl" :src="qrCodeUrl" alt="查询二维码" class="qr-image" />
@@ -59,7 +59,7 @@
               <p>生成中...</p>
             </div>
           </div>
-          <div class="qr-tip">使用微信扫描二维码</div>
+          <div class="qr-tip">使用微信扫描二维码，直接跳转小程序查询进度</div>
         </div>
       </div>
 
@@ -119,15 +119,28 @@ import { ElMessage } from 'element-plus'
 import TouchButton from '@/components/TouchButton.vue'
 import { useKioskStore } from '@/stores/kiosk'
 import { generateQRCode, printReceipt } from '@/utils/kiosk'
+import kioskApi from '@/services/kiosk'
 
 const router = useRouter()
 const store = useKioskStore()
 
 const qrCodeUrl = ref('')
+const qrCodeData = ref('')
 const printing = ref(false)
 
 async function generateQR() {
+  try {
+    const result = await kioskApi.getReceiptQRCode(store.caseNumber, store.idCardInfo?.phone)
+    if (result?.qrCodeUrl) {
+      qrCodeData.value = result.qrCodeUrl
+      qrCodeUrl.value = await generateQRCode(result.qrCodeUrl, { width: 320 })
+      return
+    }
+  } catch (e) {
+    console.warn('获取微信小程序跳转二维码失败，使用默认链接:', e)
+  }
   const queryUrl = `${window.location.origin}/query?case=${store.caseNumber}`
+  qrCodeData.value = queryUrl
   qrCodeUrl.value = await generateQRCode(queryUrl, { width: 320 })
 }
 
@@ -144,7 +157,7 @@ async function handlePrint() {
         { label: '纠纷类型', value: store.caseDraft.disputeTypePath.map(n => n.name).join(' > ') },
         { label: '服务热线', value: '12348' }
       ],
-      qrCodeData: `${window.location.origin}/query?case=${store.caseNumber}`,
+      qrCodeData: qrCodeData.value || `${window.location.origin}/query?case=${store.caseNumber}`,
       footerText: '感谢您的信任，我们将竭诚为您服务！'
     })
 

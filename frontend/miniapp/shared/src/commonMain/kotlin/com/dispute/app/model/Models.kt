@@ -567,3 +567,12 @@ data class CourtOption(
     val address: String? = null,
     val phone: String? = null
 )
+
+@Serializable
+data class ReceiptQRCodeResult(
+    val caseNo: String,
+    val token: String,
+    val qrCodeUrl: String,
+    val miniAppUrl: String? = null,
+    val expiredAt: String
+)

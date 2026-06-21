@@ -88,6 +88,13 @@ export const kioskApi = {
 
   getReceiptData(caseNumber: string): Promise<any> {
     return get(`/v1/public/case/receipt/${caseNumber}`)
+  },
+
+  getReceiptQRCode(caseNumber: string, phone?: string): Promise<any> {
+    return post('/v1/public/receipt/qrcode', {
+      caseNo: caseNumber,
+      phone: phone || ''
+    })
   }
 }
 

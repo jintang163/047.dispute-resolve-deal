@@ -28,6 +28,7 @@ type Config struct {
 	ServicePorts ServicePortsConfig `mapstructure:"service-ports"`
 	Amap         AmapConfig         `mapstructure:"amap"`
 	Spatial      SpatialConfig      `mapstructure:"spatial"`
+	WechatMiniApp WechatMiniAppConfig `mapstructure:"wechat-miniapp"`
 }
 
 type ServicesConfig struct {
@@ -234,4 +235,12 @@ type AliyunVoiceConfig struct {
 	Endpoint        string `mapstructure:"endpoint"`
 	NlsEndpoint     string `mapstructure:"nls_endpoint"`
 	NlsAppKey       string `mapstructure:"nls_app_key"`
+}
+
+type WechatMiniAppConfig struct {
+	AppID       string `mapstructure:"app_id"`
+	AppSecret   string `mapstructure:"app_secret"`
+	OriginalID  string `mapstructure:"original_id"`
+	QRCodePath  string `mapstructure:"qrcode_path"`
+	ScanBaseURL string `mapstructure:"scan_base_url"`
 }

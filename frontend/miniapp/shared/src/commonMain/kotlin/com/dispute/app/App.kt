@@ -6,7 +6,11 @@ import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.graphics.Color
 import com.dispute.app.pages.AIConsultPage
 import com.dispute.app.pages.CaseDetailPage
@@ -29,6 +33,18 @@ val SuccessColor = Color(0xFF22C55E)
 val WarningColor = Color(0xFFF59E0B)
 val DangerColor = Color(0xFFEF4444)
 val InfoColor = Color(0xFF6366F1)
+
+object LaunchParams {
+    var caseNo: String = ""
+    var phone: String = ""
+
+    fun setFromQuery(query: Map<String, String>) {
+        query["caseNo"]?.let { caseNo = it }
+        query["phone"]?.let { phone = it }
+    }
+
+    fun hasScanData(): Boolean = caseNo.isNotBlank()
+}
 
 val LightColors = lightColorScheme(
     primary = PrimaryColor,
@@ -62,6 +78,15 @@ fun App() {
     val router = remember { Router(appState) }
     val apiClient = remember { ApiClient() }
 
+    var scanHandled by remember { mutableStateOf(false) }
+
+    LaunchedEffect(Unit) {
+        if (LaunchParams.hasScanData() && !scanHandled) {
+            scanHandled = true
+            router.navigate(Route.ScanProgress(LaunchParams.caseNo, LaunchParams.phone))
+        }
+    }
+
     CompositionLocalProvider(
         LocalAppState provides appState,
         LocalRouter provides router,
@@ -87,6 +112,7 @@ private fun AppContent(router: Router, appState: AppState) {
         is Route.CaseList -> CaseListPage()
         is Route.CaseDetail -> CaseDetailPage(currentRoute.caseNumber)
         is Route.Progress -> ProgressPage()
+        is Route.ScanProgress -> ProgressPage(initialCaseNo = currentRoute.caseNo, initialPhone = currentRoute.phone)
         is Route.AIConsult -> AIConsultPage()
         is Route.Satisfaction -> SatisfactionPage(currentRoute.caseNumber)
         is Route.Profile -> ProfilePage()
