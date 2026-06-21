@@ -281,7 +281,27 @@ const (
 
 	RedisKeyPrefixLegalAid = "legalaid:"
 	MinIOPathLegalAid      = "legalaid"
+
+	MediationTemplateCategoryNeighborhood = "neighborhood"
+	MediationTemplateCategoryWage         = "wage"
+	MediationTemplateCategoryProperty     = "property"
+	MediationTemplateCategoryContract     = "contract"
+	MediationTemplateCategoryFamily       = "family"
+	MediationTemplateCategoryTraffic      = "traffic"
+	MediationTemplateCategoryConsumer     = "consumer"
+	MediationTemplateCategoryOther        = "other"
 )
+
+var MediationTemplateCategoryMap = map[string]string{
+	MediationTemplateCategoryNeighborhood: "邻里纠纷",
+	MediationTemplateCategoryWage:         "欠薪纠纷",
+	MediationTemplateCategoryProperty:     "物业纠纷",
+	MediationTemplateCategoryContract:     "合同纠纷",
+	MediationTemplateCategoryFamily:       "家庭纠纷",
+	MediationTemplateCategoryTraffic:      "交通事故",
+	MediationTemplateCategoryConsumer:     "消费纠纷",
+	MediationTemplateCategoryOther:        "其他",
+}
 
 var CaseStatusMap = map[int]string{
 	CaseStatusPending:   "待分派",
