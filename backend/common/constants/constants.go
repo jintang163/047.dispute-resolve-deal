@@ -141,6 +141,7 @@ const (
 	MQTopicTransferTimeout = "dispute_transfer_timeout"
 	MQTopicTransferComplete = "dispute_transfer_complete"
 	MQTopicEvidenceClassify = "dispute_evidence_classify"
+	MQTopicExportPassword   = "data_export_password"
 
 	MQTagAll     = "*"
 	MQTagSms     = "sms"
@@ -159,6 +160,23 @@ const (
 	MinIOPathAvatar      = "avatar"
 	MinIOPathJudicial    = "judicial"
 	MinIOPathCallback    = "callback"
+	MinIOPathExport      = "export"
+
+	ExportTypeCase        = 1
+	ExportTypePerformance = 2
+	ExportTypeEvidence    = 3
+	ExportTypeOther       = 4
+
+	ExportStatusProcessing = 10
+	ExportStatusSuccess    = 20
+	ExportStatusFailed     = 30
+
+	ExportPasswordSmsStatusPending = 0
+	ExportPasswordSmsStatusSent    = 1
+	ExportPasswordSmsStatusFailed  = 2
+
+	ExportAESKeyLength  = 32
+	ExportExpireDays    = 7
 
 	EsignStatusDraft     = 0
 	EsignStatusPending   = 10
@@ -521,5 +539,24 @@ var CounselorScheduleTypeMap = map[int]string{
 	CounselorScheduleTypeRest:       "休息",
 	CounselorScheduleTypeAppointment: "已有预约",
 	CounselorScheduleTypeOther:      "其他事务",
+}
+
+var ExportTypeMap = map[int]string{
+	ExportTypeCase:        "案件数据",
+	ExportTypePerformance: "考核数据",
+	ExportTypeEvidence:    "证据数据",
+	ExportTypeOther:       "其他",
+}
+
+var ExportStatusMap = map[int]string{
+	ExportStatusProcessing: "导出中",
+	ExportStatusSuccess:    "导出成功",
+	ExportStatusFailed:   "导出失败",
+}
+
+var ExportPasswordSmsStatusMap = map[int]string{
+	ExportPasswordSmsStatusPending: "未发送",
+	ExportPasswordSmsStatusSent:    "已发送",
+	ExportPasswordSmsStatusFailed:  "发送失败",
 }
 

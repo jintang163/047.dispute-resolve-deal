@@ -21,6 +21,7 @@ import {
   PlusOutlined,
   HeartOutlined,
   CalendarOutlined,
+  DownloadOutlined,
 } from '@ant-design/icons';
 
 export interface MenuItem {
@@ -58,6 +59,12 @@ export const menuConfig: MenuItem[] = [
         key: 'dispute-create',
         label: '新增案件',
         path: '/dispute/create',
+      },
+      {
+        key: 'export-log',
+        label: '数据导出记录',
+        icon: React.createElement(DownloadOutlined),
+        path: '/export/log',
       },
     ],
   },

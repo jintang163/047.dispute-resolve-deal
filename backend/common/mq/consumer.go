@@ -167,6 +167,16 @@ type JudicialRemindMessage struct {
 	TargetPhones []string `json:"targetPhones"`
 }
 
+type ExportPasswordMessage struct {
+	ExportID      int64  `json:"exportId"`
+	ExportNo      string `json:"exportNo"`
+	ExportName    string `json:"exportName"`
+	Password      string `json:"password"`
+	OperatorPhone string `json:"operatorPhone"`
+	OperatorName  string `json:"operatorName"`
+	RecordCount   int    `json:"recordCount"`
+}
+
 func StartConsumers() {
 	consumerOnce.Do(func() {
 		shutdownSignal = make(chan struct{})
@@ -190,6 +200,7 @@ func StartConsumers() {
 		go startEsignNotifyConsumer(cfg)
 		go startBlockchainStoreConsumer(cfg)
 		go startEvidenceClassifyConsumer(cfg)
+		go startExportPasswordConsumer(cfg)
 
 		go monitorShutdownSignal()
 
@@ -1821,4 +1832,134 @@ func startEvidenceClassifyConsumer(cfg *config.Config) {
 		case <-time.After(1 * time.Second):
 		}
 	}
+}
+
+func startExportPasswordConsumer(cfg *config.Config) {
+	consumerWg.Add(1)
+	defer consumerWg.Done()
+
+	groupName := cfg.RocketMQ.GroupName + "_export_password"
+	cons := InitConsumer(cfg, groupName)
+	consumers = append(consumers, cons)
+
+	topic := constants.MQTopicExportPassword
+
+	err := cons.Subscribe(topic, consumer.MessageSelector{
+		Type:       consumer.TAG,
+		Expression: "*",
+	}, func(ctx context.Context, msgs ...*primitive.MessageExt) (consumer.ConsumeResult, error) {
+		for _, msg := range msgs {
+			select {
+			case <-shutdownSignal:
+				return consumer.ConsumeRetryLater, nil
+			default:
+			}
+
+			var pwdMsg ExportPasswordMessage
+			if err := json.Unmarshal(msg.Body, &pwdMsg); err != nil {
+				logger.Error("Unmarshal export password message failed",
+					logger.Error(err),
+					zap.String("msgId", msg.MsgId),
+				)
+				continue
+			}
+
+			logger.Info("Received export password message",
+				zap.Int64("exportId", pwdMsg.ExportID),
+				zap.String("exportNo", pwdMsg.ExportNo),
+			)
+
+			processExportPasswordNotification(&pwdMsg)
+		}
+		return consumer.ConsumeSuccess, nil
+	})
+
+	if err != nil {
+		logger.Error("Subscribe export password topic failed", logger.Error(err))
+		return
+	}
+
+	if err := cons.Start(); err != nil {
+		logger.Error("Start export password consumer failed", logger.Error(err))
+		return
+	}
+
+	logger.Info("Export password consumer started", zap.String("topic", topic), zap.String("group", groupName))
+
+	for {
+		select {
+		case <-shutdownSignal:
+			logger.Info("Export password consumer stopping")
+			return
+		case <-time.After(1 * time.Second):
+		}
+	}
+}
+
+func processExportPasswordNotification(msg *ExportPasswordMessage) {
+	db := database.GetDB()
+	if db == nil {
+		logger.Error("Database not initialized")
+		return
+	}
+
+	title := fmt.Sprintf("【数据导出密码】")
+	content := fmt.Sprintf(
+		"尊敬的%s您好：您申请的数据导出任务已完成。导出单号：%s，导出名称：%s，记录数：%d条。文件解压密码：%s（请妥善保管，请勿泄露）。文件链接请在系统【数据导出】页面下载，有效期7天。",
+		msg.OperatorName,
+		msg.ExportNo,
+		msg.ExportName,
+		msg.RecordCount,
+		msg.Password,
+	)
+
+	params := map[string]interface{}{
+		"exportId":    msg.ExportID,
+		"exportNo":    msg.ExportNo,
+		"exportName":  msg.ExportName,
+		"recordCount": msg.RecordCount,
+		"password":    msg.Password,
+	}
+	paramsJSON, _ := json.Marshal(params)
+
+	channels := []string{"短信", "站内信"}
+	for _, ch := range channels {
+		insertSQL := `INSERT INTO notification_record (receiver_id, receiver_name, template_id, template_name, template_type, title, content, channel_type, send_status, params, case_id, case_no, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+		if err := db.Exec(insertSQL,
+			0,
+			msg.OperatorName,
+			100,
+			"数据导出密码通知",
+			100,
+			title,
+			content,
+			ch,
+			1,
+			string(paramsJSON),
+			msg.ExportID,
+			msg.ExportNo,
+			time.Now(),
+		).Error; err != nil {
+			logger.Error("Insert export password notification record failed",
+				logger.Error(err),
+				zap.Int64("exportId", msg.ExportID),
+				zap.String("channel", ch),
+			)
+		}
+	}
+
+	logger.Info("Export password notification sent",
+		zap.Int64("exportId", msg.ExportID),
+		zap.String("exportNo", msg.ExportNo),
+	)
+}
+
+func SendExportPasswordMessage(msg *ExportPasswordMessage) error {
+	callback := func(ctx context.Context, result *primitive.SendResult, err error) {
+		if err != nil {
+			logger.Error("Send export password message async failed", logger.Error(err))
+		}
+	}
+	body, _ := json.Marshal(msg)
+	return SendAsyncMessage(constants.MQTopicExportPassword, body, callback, constants.MQTagSms)
 }

@@ -30,6 +30,7 @@ import CaseLibraryDetail from './pages/CaseLibrary/Detail';
 import CaseLibraryCreate from './pages/CaseLibrary/Create';
 import CounselorList from './pages/Counseling/CounselorList';
 import AppointmentList from './pages/Counseling/AppointmentList';
+import ExportLogList from './pages/ExportLog/List';
 import { getToken } from './utils/auth';
 import { useUserStore } from './stores/user';
 
@@ -131,6 +132,9 @@ const App: React.FC = () => {
           <Route path="counseling">
             <Route path="counselor" element={<CounselorList />} />
             <Route path="appointment" element={<AppointmentList />} />
+          </Route>
+          <Route path="export">
+            <Route path="log" element={<ExportLogList />} />
           </Route>
         </Route>
         <Route path="*" element={<Navigate to="/dashboard" replace />} />

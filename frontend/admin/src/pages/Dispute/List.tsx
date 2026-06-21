@@ -1,15 +1,18 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Button, Tag, Space, App, Modal, Card } from 'antd';
-import { PlusOutlined, EyeOutlined, EditOutlined, DeleteOutlined, ExclamationCircleOutlined, FireOutlined } from '@ant-design/icons';
+import { Button, Tag, Space, App, Modal, Card, Form } from 'antd';
+import { PlusOutlined, EyeOutlined, EditOutlined, DeleteOutlined, ExclamationCircleOutlined, FireOutlined, DownloadOutlined } from '@ant-design/icons';
 import {
   ProTable,
   ProFormSelect,
   ProFormDateRangePicker,
   ProFormText,
+  ModalForm,
+  ProForm,
 } from '@ant-design/pro-components';
 import type { ActionType, ProColumns } from '@ant-design/pro-components';
 import { useNavigate } from 'react-router-dom';
 import { disputeService, DisputeCase, DisputeTypeNode } from '../../services/dispute';
+import { exportService, CaseExportParams } from '../../services/export';
 import dayjs from 'dayjs';
 
 const { confirm } = Modal;
@@ -52,6 +55,9 @@ const DisputeList: React.FC = () => {
   const { message } = App.useApp();
   const actionRef = useRef<ActionType>();
   const [selectedRowKeys, setSelectedRowKeys] = useState<React.Key[]>([]);
+  const [exportModalVisible, setExportModalVisible] = useState(false);
+  const [exportLoading, setExportLoading] = useState(false);
+  const [exportForm] = Form.useForm<CaseExportParams>();
   const [activeTagKeyword, setActiveTagKeyword] = useState<string>('');
   const [hotKeywords, setHotKeywords] = useState<Array<{ keyword: string; category?: string; frequency?: number }>>([]);
   const [typesFlat, setTypesFlat] = useState<Map<number, string>>(new Map());
@@ -320,6 +326,26 @@ const DisputeList: React.FC = () => {
           <Button key="create" type="primary" icon={<PlusOutlined />} onClick={() => navigate('/dispute/create')}>
             新增案件
           </Button>,
+          <Button
+            key="export"
+            icon={<DownloadOutlined />}
+            onClick={() => {
+              exportForm.resetFields();
+              if (selectedRowKeys.length > 0) {
+                exportForm.setFieldsValue({ ids: selectedRowKeys as any });
+              }
+              setExportModalVisible(true);
+            }}
+          >
+            {selectedRowKeys.length > 0 ? `批量导出(${selectedRowKeys.length})` : '批量导出'}
+          </Button>,
+          <Button
+            key="exportLog"
+            icon={<DownloadOutlined />}
+            onClick={() => navigate('/export/log')}
+          >
+            导出记录
+          </Button>,
         ]}
         request={async (params, sort, filter) => {
           try {
@@ -357,6 +383,135 @@ const DisputeList: React.FC = () => {
         }}
         scroll={{ x: 1800 }}
       />
+
+      <ModalForm<CaseExportParams>
+        title="批量导出案件数据"
+        form={exportForm}
+        open={exportModalVisible}
+        width={560}
+        modalProps={{
+          destroyOnClose: true,
+          maskClosable: false,
+          okText: '确认导出',
+          cancelText: '取消',
+        }}
+        submitTimeout={30000}
+        onOpenChange={(visible) => setExportModalVisible(visible)}
+        onFinish={async (values) => {
+          try {
+            setExportLoading(true);
+            const params: CaseExportParams = {
+              ...values,
+            };
+            if (values.startTime && Array.isArray(values.startTime as any)) {
+              const range = values.startTime as any;
+              params.startTime = range[0] ? dayjs(range[0]).format('YYYY-MM-DD') : undefined;
+              params.endTime = range[1] ? dayjs(range[1]).format('YYYY-MM-DD') : undefined;
+              delete (params as any).startTime as any;
+            }
+            const res: any = await exportService.createCaseExport(params);
+            const data = res?.data ?? res;
+            message.success(
+              data?.message || `导出成功，共 ${data?.recordCount || 0} 条记录，解压密码将通过短信发送到您的手机`,
+              5,
+            );
+            setExportModalVisible(false);
+            return true;
+          } catch (error: any) {
+            message.error(error.message || '导出失败');
+            return false;
+          } finally {
+            setExportLoading(false);
+          }
+        }}
+      >
+        <ProFormSelect
+          name="typeId"
+          label="纠纷类型"
+          placeholder="请选择纠纷类型（不选则导出全部）"
+          options={Array.from(typesFlat.entries()).map(([id, name]) => ({ label: name, value: id }))}
+          allowClear
+          width="md"
+        />
+        <ProFormSelect
+          name="mediatorId"
+          label="调解员"
+          placeholder="请选择调解员（不选则导出全部）"
+          request={async () => {
+            try {
+              const res: any = await disputeService.getMediatorsForAssign();
+              const list = res?.data ?? res ?? [];
+              return list.map((m: any) => ({
+                label: `${m.realName || m.mediatorName || ''}${m.orgName ? ` (${m.orgName})` : ''}`,
+                value: m.id,
+              }));
+            } catch {
+              return [];
+            }
+          }}
+          allowClear
+          width="md"
+          showSearch
+          fieldProps={{
+            optionFilterProp: 'label',
+          }}
+        />
+        <ProFormSelect
+          name="status"
+          label="案件状态"
+          placeholder="请选择案件状态（不选则导出全部）"
+          options={[
+            { label: '待分派', value: 10 },
+            { label: '调解中', value: 20 },
+            { label: '待审批', value: 30 },
+            { label: '审批中', value: 40 },
+            { label: '已结案', value: 50 },
+            { label: '已取消', value: 99 },
+          ]}
+          allowClear
+          width="md"
+        />
+        <ProFormSelect
+          name="caseLevel"
+          label="紧急程度"
+          placeholder="请选择紧急程度（不选则导出全部）"
+          options={[
+            { label: '特急', value: 1 },
+            { label: '紧急', value: 2 },
+            { label: '一般', value: 3 },
+            { label: '普通', value: 4 },
+          ]}
+          allowClear
+          width="md"
+        />
+        <ProFormDateRangePicker
+          name="startTime"
+          label="创建时间范围"
+          placeholder={['开始日期', '结束日期']}
+          fieldProps={{
+            format: 'YYYY-MM-DD',
+          }}
+          width="md"
+        />
+        <ProFormText
+          name="keyword"
+          label="关键词"
+          placeholder="请输入关键词（案件编号/标题/描述模糊匹配）"
+          width="md"
+        />
+        {selectedRowKeys.length > 0 && (
+          <Form.Item name="ids" label="已选案件" style={{ marginBottom: 0 }}>
+            <Tag color="blue">已选择 {selectedRowKeys.length} 条案件记录</Tag>
+          </Form.Item>
+        )}
+        <div style={{ marginTop: 8, color: '#8c8c8c', fontSize: 12, lineHeight: 1.6 }}>
+          <div>⚠️ 注意事项：</div>
+          <div>1. 导出文件为 AES-256 加密压缩包，解压密码将通过短信单独发送到您绑定的手机号</div>
+          <div>2. 文件有效期 7 天，过期后将自动删除，请及时下载</div>
+          <div>3. 单次导出时间范围不超过 1 年，防止数据量过大</div>
+          <div>4. 所有导出操作均会留痕，满足数据上报安全要求</div>
+        </div>
+      </ModalForm>
     </>
   );
 };

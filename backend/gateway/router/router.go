@@ -187,6 +187,15 @@ func RegisterRoutes(h *app.Hertz) {
 				dispatch.PUT("/config", handler.UpdateDispatchConfig)
 				dispatch.GET("/mediator-load", handler.GetMediatorLoadStats)
 			}
+
+			dispute.POST("/export", handler.CreateCaseExport)
+		}
+
+		export := userAuth.Group("/export")
+		{
+			export.GET("/log", handler.GetExportList)
+			export.GET("/log/:id", handler.GetExportDetail)
+			export.GET("/log/:id/download", handler.DownloadExport)
 		}
 
 		judicial := userAuth.Group("/judicial")
