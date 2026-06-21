@@ -1,6 +1,7 @@
 package aliyun
 
 import (
+	"bytes"
 	"crypto/hmac"
 	"crypto/sha1"
 	"encoding/base64"
@@ -356,12 +357,148 @@ func (c *VoiceClient) recognizeMock(audioData []byte, format string) (*SpeechRec
 	}, nil
 }
 
+func (c *VoiceClient) getNLSToken() (string, error) {
+	tokenURL := fmt.Sprintf("https://%s/pop/2019-02-28/tokens", c.nlsEndpoint)
+
+	params := map[string]string{
+		"AccessKeyId":      c.accessKeyID,
+		"Action":           "CreateToken",
+		"Format":           "JSON",
+		"RegionId":         c.regionID,
+		"SignatureMethod":  "HMAC-SHA1",
+		"SignatureNonce":   fmt.Sprintf("%d", time.Now().UnixNano()),
+		"SignatureVersion": "1.0",
+		"Timestamp":        time.Now().UTC().Format("2006-01-02T15:04:05Z"),
+		"Version":          "2019-02-28",
+	}
+
+	signature := c.generateSignature(params, "GET")
+	params["Signature"] = signature
+
+	query := c.buildQuery(params)
+	reqURL := fmt.Sprintf("%s/?%s", tokenURL, query)
+
+	resp, err := c.httpClient.Get(reqURL)
+	if err != nil {
+		return "", fmt.Errorf("get nls token request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("read nls token response failed: %w", err)
+	}
+
+	var tokenResp struct {
+		Token     string `json:"Token"`
+		RequestId string `json:"RequestId"`
+		ErrMsg    string `json:"ErrMsg"`
+		ErrCode   string `json:"ErrCode"`
+	}
+	if err := json.Unmarshal(body, &tokenResp); err != nil {
+		return "", fmt.Errorf("unmarshal nls token response failed: %w", err)
+	}
+
+	if tokenResp.ErrCode != "" && tokenResp.ErrCode != "0" {
+		return "", fmt.Errorf("get nls token error: code=%s, msg=%s", tokenResp.ErrCode, tokenResp.ErrMsg)
+	}
+
+	if tokenResp.Token == "" {
+		return "", fmt.Errorf("nls token is empty")
+	}
+
+	return tokenResp.Token, nil
+}
+
 func (c *VoiceClient) recognizeWithNLS(audioData []byte, format string) (*SpeechRecognizeResult, error) {
-	logger.Warn("Aliyun NLS speech recognition not fully implemented, using mock mode",
-		zap.String("nlsEndpoint", c.nlsEndpoint),
-		zap.String("appKey", c.nlsAppKey),
+	token, err := c.getNLSToken()
+	if err != nil {
+		logger.Error("Failed to get NLS token, fallback to mock",
+			logger.Error(err),
+		)
+		return c.recognizeMock(audioData, format)
+	}
+
+	contentType := "audio/wav"
+	switch format {
+	case "mp3":
+		contentType = "audio/mp3"
+	case "m4a":
+		contentType = "audio/m4a"
+	case "amr":
+		contentType = "audio/amr"
+	case "aac":
+		contentType = "audio/aac"
+	case "webm":
+		contentType = "audio/webm"
+	}
+
+	recognizeURL := fmt.Sprintf("https://%s/v1/voice/asr/single", c.nlsEndpoint)
+
+	req, err := http.NewRequest("POST", recognizeURL, bytes.NewReader(audioData))
+	if err != nil {
+		logger.Error("Failed to create NLS recognize request, fallback to mock",
+			logger.Error(err),
+		)
+		return c.recognizeMock(audioData, format)
+	}
+
+	req.Header.Set("Content-Type", contentType)
+	req.Header.Set("X-NLS-Token", token)
+	req.Header.Set("X-NLS-AppKey", c.nlsAppKey)
+	req.Header.Set("X-NLS-Format", "json")
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		logger.Error("NLS recognize request failed, fallback to mock",
+			logger.Error(err),
+		)
+		return c.recognizeMock(audioData, format)
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		logger.Error("Read NLS recognize response failed, fallback to mock",
+			logger.Error(err),
+		)
+		return c.recognizeMock(audioData, format)
+	}
+
+	logger.Debug("NLS recognize response",
+		zap.String("body", string(respBody)),
 	)
-	return c.recognizeMock(audioData, format)
+
+	var nlsResult struct {
+		RequestId string `json:"request_id"`
+		Result    string `json:"result"`
+		Duration  int    `json:"duration"`
+		ErrCode   string `json:"err_code"`
+		ErrMsg    string `json:"err_msg"`
+		Status    int    `json:"status"`
+	}
+	if err := json.Unmarshal(respBody, &nlsResult); err != nil {
+		logger.Error("Unmarshal NLS recognize response failed, fallback to mock",
+			logger.Error(err),
+		)
+		return c.recognizeMock(audioData, format)
+	}
+
+	if nlsResult.ErrCode != "" && nlsResult.ErrCode != "0" {
+		logger.Error("NLS recognize error, fallback to mock",
+			zap.String("errCode", nlsResult.ErrCode),
+			zap.String("errMsg", nlsResult.ErrMsg),
+		)
+		return c.recognizeMock(audioData, format)
+	}
+
+	return &SpeechRecognizeResult{
+		TaskID:   nlsResult.RequestId,
+		Text:     nlsResult.Result,
+		Duration: nlsResult.Duration,
+		Status:   "success",
+	}, nil
 }
 
 func (c *VoiceClient) doRequest(action string, params map[string]string) (*VoiceCallResponse, error) {
