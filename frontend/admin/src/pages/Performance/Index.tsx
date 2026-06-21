@@ -1,621 +1,610 @@
-import React, { useState, useMemo, useEffect } from 'react';
-import { Row, Col, Card, Statistic, Space, Tag, DatePicker, Table, App, Progress } from 'antd';
+import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import {
-  TrophyOutlined,
-  FileTextOutlined,
-  CheckCircleOutlined,
-  SmileOutlined,
-  ClockCircleOutlined,
-  TeamOutlined,
-  RiseOutlined,
-  StarOutlined,
-  ArrowUpOutlined,
-  ArrowDownOutlined,
+  Row, Col, Card, Statistic, Space, Tag, DatePicker, Table, App, Progress,
+  Modal, Form, InputNumber, Input, Select, Button, Tooltip, Divider, Drawer, Descriptions,
+} from 'antd';
+import {
+  TrophyOutlined, FileTextOutlined, CheckCircleOutlined, SmileOutlined,
+  ClockCircleOutlined, TeamOutlined, RiseOutlined, StarOutlined,
+  ArrowUpOutlined, ArrowDownOutlined, BellOutlined, SettingOutlined,
+  DownloadOutlined, EditOutlined, EyeOutlined,
 } from '@ant-design/icons';
 import ReactECharts from 'echarts-for-react';
 import dayjs, { Dayjs } from 'dayjs';
-import { performanceService, PerformanceStats } from '../../services/user';
+import { performanceService, PerformanceStats, IndicatorConfig, PerformanceInterview } from '../../services/user';
+import { useUserStore } from '../../stores/user';
 
-const { RangePicker } = DatePicker;
+const { MonthPicker } = DatePicker;
+
+const levelColorMap: Record<string, string> = {
+  S: '#52c41a', A: '#1677ff', B: '#faad14', C: '#fa8c16', D: '#ff4d4f',
+};
+
+const ChangeTag: React.FC<{ value: number; suffix?: string }> = ({ value, suffix = '%' }) => {
+  if (value === 0) return <Tag>-</Tag>;
+  return (
+    <Tag color={value > 0 ? '#f6ffed' : '#fff2f0'} style={{ margin: 0 }}>
+      <span style={{ color: value > 0 ? '#52c41a' : '#ff4d4f', fontSize: 12 }}>
+        {value > 0 ? <ArrowUpOutlined /> : <ArrowDownOutlined />} {Math.abs(value).toFixed(1)}{suffix}
+      </span>
+    </Tag>
+  );
+};
 
 const Performance: React.FC = () => {
   const { message } = App.useApp();
+  const userInfo = useUserStore((s) => s.userInfo);
+  const isAdmin = userInfo?.role === '4' || userInfo?.role === '1';
+
+  const [selectedMonth, setSelectedMonth] = useState<Dayjs>(dayjs());
   const [loading, setLoading] = useState(false);
-  const [dateRange, setDateRange] = useState<[Dayjs, Dayjs]>([
-    dayjs().startOf('month'),
-    dayjs().endOf('month'),
-  ]);
-  const [rankData, setRankData] = useState<PerformanceStats[]>([]);
-  const [summary, setSummary] = useState<any>({});
+  const [dashboardData, setDashboardData] = useState<any>({ summary: {}, mediators: [] });
+  const [comparisonData, setComparisonData] = useState<any>({ current: {}, previous: {}, comparison: {}, trend: [] });
+  const [indicatorConfig, setIndicatorConfig] = useState<{ indicators: IndicatorConfig[]; totalWeight: number }>({ indicators: [], totalWeight: 0 });
+  const [interviewList, setInterviewList] = useState<any[]>([]);
+  const [interviewTotal, setInterviewTotal] = useState(0);
+  const [interviewPage, setInterviewPage] = useState(1);
 
-  useEffect(() => {
-    fetchData();
-  }, [dateRange]);
+  const [weightModalOpen, setWeightModalOpen] = useState(false);
+  const [weightForm] = Form.useForm();
+  const [interviewModalOpen, setInterviewModalOpen] = useState(false);
+  const [interviewForm] = Form.useForm();
+  const [interviewDetailOpen, setInterviewDetailOpen] = useState(false);
+  const [interviewDetail, setInterviewDetail] = useState<any>(null);
+  const [selectedMediator, setSelectedMediator] = useState<PerformanceStats | null>(null);
 
-  const fetchData = async () => {
+  const fetchDashboard = useCallback(async () => {
     try {
       setLoading(true);
-      const [rankRes, summaryRes] = await Promise.all([
-        performanceService.getRank({
-          startDate: dateRange[0].format('YYYY-MM-DD'),
-          endDate: dateRange[1].format('YYYY-MM-DD'),
-        }),
-        performanceService.getSummary({
-          startDate: dateRange[0].format('YYYY-MM-DD'),
-          endDate: dateRange[1].format('YYYY-MM-DD'),
-        }),
+      const y = selectedMonth.year();
+      const m = selectedMonth.month() + 1;
+      const [dashRes, compRes] = await Promise.all([
+        performanceService.getDashboard({ year: y, month: m }),
+        performanceService.getMonthComparison({ year: y, month: m }),
       ]);
-      setRankData((rankRes.data || rankRes) || []);
-      setSummary((summaryRes.data || summaryRes) || {});
+      const dash = (dashRes as any)?.data || dashRes || {};
+      const comp = (compRes as any)?.data || compRes || {};
+      setDashboardData(dash);
+      setComparisonData(comp);
     } catch (error) {
-      console.error('Fetch performance error:', error);
+      console.error('Fetch dashboard error:', error);
     } finally {
       setLoading(false);
     }
+  }, [selectedMonth]);
+
+  const fetchIndicators = async () => {
+    try {
+      const res = await performanceService.getIndicatorConfig();
+      const data = (res as any)?.data || res || {};
+      setIndicatorConfig(data);
+    } catch (error) {
+      console.error('Fetch indicators error:', error);
+    }
   };
+
+  const fetchInterviews = useCallback(async (page = 1) => {
+    try {
+      const y = selectedMonth.year();
+      const m = selectedMonth.month() + 1;
+      const res = await performanceService.getInterviewList({
+        page,
+        pageSize: 5,
+        periodValue: `${y}-${String(m).padStart(2, '0')}`,
+      });
+      const data = (res as any)?.data || res || {};
+      setInterviewList(data?.list || []);
+      setInterviewTotal(data?.total || 0);
+      setInterviewPage(page);
+    } catch (error) {
+      console.error('Fetch interviews error:', error);
+    }
+  }, [selectedMonth]);
+
+  useEffect(() => {
+    fetchDashboard();
+    fetchIndicators();
+    fetchInterviews(1);
+  }, [fetchDashboard, fetchInterviews]);
+
+  const summary = dashboardData.summary || {};
+  const comparison = comparisonData.comparison || {};
+  const trend = comparisonData.trend || [];
+
+  const summaryCards = [
+    { title: '考核人数', value: summary.mediatorCount || 0, icon: <TeamOutlined />, color: '#1677ff', bg: '#1677ff15' },
+    { title: '受理数', value: summary.totalCases || 0, icon: <FileTextOutlined />, color: '#722ed1', bg: '#722ed115', change: comparison.caseCountChange },
+    { title: '成功率', value: summary.avgSuccessRate || 0, suffix: '%', icon: <CheckCircleOutlined />, color: '#52c41a', bg: '#52c41a15', change: comparison.successRateChange, precision: 1 },
+    { title: '平均时长', value: summary.avgDays || 0, suffix: '天', icon: <ClockCircleOutlined />, color: '#fa8c16', bg: '#fa8c1615', change: comparison.avgDaysChange, precision: 1 },
+    { title: '满意度', value: summary.avgSatisfaction || 0, suffix: '/5', icon: <SmileOutlined />, color: '#faad14', bg: '#faad1415', change: comparison.avgSatisfactionChange, precision: 1 },
+    { title: '被催办次数', value: summary.totalUrge || 0, icon: <BellOutlined />, color: '#ff4d4f', bg: '#ff4d4f15', change: comparison.urgeCountChange },
+  ];
+
+  const trendOption = useMemo(() => {
+    const months = trend.map((t: any) => `${t.month || t.MONTH}月`);
+    const scoreData = trend.map((t: any) => t.total_score ?? t.total_score ?? 0);
+    const caseData = trend.map((t: any) => t.case_count ?? t.CASE_COUNT ?? 0);
+    return {
+      tooltip: { trigger: 'axis', backgroundColor: 'rgba(255,255,255,0.95)', borderColor: '#f0f0f0', textStyle: { color: '#333' } },
+      legend: { data: ['综合得分', '受理数'], top: 0 },
+      grid: { left: '3%', right: '4%', bottom: '3%', containLabel: true },
+      xAxis: { type: 'category', data: months.length > 0 ? months : Array.from({ length: 12 }, (_, i) => `${i + 1}月`), axisLabel: { color: '#666' } },
+      yAxis: [
+        { type: 'value', name: '得分', min: 50, max: 100, splitLine: { lineStyle: { color: '#f0f0f0' } }, axisLabel: { color: '#666' } },
+        { type: 'value', name: '受理数', splitLine: { show: false }, axisLabel: { color: '#666' } },
+      ],
+      series: [
+        {
+          name: '综合得分', type: 'line', smooth: true, data: scoreData.length > 0 ? scoreData : Array(12).fill(null),
+          itemStyle: { color: '#722ed1' }, lineStyle: { width: 3 },
+          areaStyle: { color: { type: 'linear', x: 0, y: 0, x2: 0, y2: 1, colorStops: [{ offset: 0, color: 'rgba(114,46,209,0.3)' }, { offset: 1, color: 'rgba(114,46,209,0.02)' }] } },
+        },
+        {
+          name: '受理数', type: 'bar', yAxisIndex: 1, data: caseData.length > 0 ? caseData : Array(12).fill(null),
+          itemStyle: { color: '#1677ff', borderRadius: [4, 4, 0, 0] }, barMaxWidth: 30,
+        },
+      ],
+    };
+  }, [trend]);
+
+  const radarOption = useMemo(() => {
+    const mediators = dashboardData.mediators || [];
+    const top = mediators[0] || ({} as PerformanceStats);
+    const avg = {
+      caseCount: 0, successRate: 0, avgDays: 0, satisfaction: 0, urgeCount: 0, count: 0,
+    };
+    mediators.forEach((m: PerformanceStats) => {
+      avg.caseCount += (m.caseCount || m.totalCases || 0);
+      avg.successRate += (m.successRate || m.mediationSuccessRate || 0);
+      avg.avgDays += (m.avgDays || m.avgDuration || 0);
+      avg.satisfaction += (m.avgSatisfaction || m.satisfaction || 0);
+      avg.urgeCount += (m.urgeCount || 0);
+      avg.count++;
+    });
+    if (avg.count > 0) {
+      avg.caseCount /= avg.count;
+      avg.successRate /= avg.count;
+      avg.avgDays /= avg.count;
+      avg.satisfaction /= avg.count;
+      avg.urgeCount /= avg.count;
+    }
+    return {
+      tooltip: { backgroundColor: 'rgba(255,255,255,0.95)', borderColor: '#f0f0f0', textStyle: { color: '#333' } },
+      legend: { data: ['TOP1', '平均水平'], top: 0 },
+      radar: {
+        indicator: [
+          { name: '受理量', max: 50 },
+          { name: '成功率(%)', max: 100 },
+          { name: '效率(逆向)', max: 100 },
+          { name: '满意度', max: 5 },
+          { name: '无催办(逆向)', max: 100 },
+        ],
+        splitArea: { areaStyle: { color: ['#fafafa', '#fff'] } },
+      },
+      series: [{
+        type: 'radar',
+        data: [
+          {
+            value: [
+              top.caseCount || top.totalCases || 0,
+              top.successRate || top.mediationSuccessRate || 0,
+              Math.max(0, 100 - (top.avgDays || top.avgDuration || 0) * 5),
+              top.avgSatisfaction || top.satisfaction || 0,
+              Math.max(0, 100 - (top.urgeCount || 0) * 20),
+            ],
+            name: 'TOP1',
+            areaStyle: { color: 'rgba(22,119,255,0.3)' },
+            lineStyle: { color: '#1677ff' },
+            itemStyle: { color: '#1677ff' },
+          },
+          {
+            value: [
+              avg.caseCount, avg.successRate,
+              Math.max(0, 100 - avg.avgDays * 5),
+              avg.satisfaction,
+              Math.max(0, 100 - avg.urgeCount * 20),
+            ],
+            name: '平均水平',
+            areaStyle: { color: 'rgba(82,196,26,0.2)' },
+            lineStyle: { color: '#52c41a', type: 'dashed' },
+            itemStyle: { color: '#52c41a' },
+          },
+        ],
+      }],
+    };
+  }, [dashboardData]);
+
+  const indicatorBarOption = useMemo(() => {
+    const indicators = indicatorConfig.indicators || [];
+    if (indicators.length === 0) return {};
+    return {
+      tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' }, backgroundColor: 'rgba(255,255,255,0.95)', borderColor: '#f0f0f0', textStyle: { color: '#333' } },
+      grid: { left: '3%', right: '4%', bottom: '3%', containLabel: true },
+      xAxis: { type: 'category', data: indicators.map((i) => i.indicator_name), axisLabel: { color: '#666' } },
+      yAxis: { type: 'value', name: '权重(%)', max: 50, splitLine: { lineStyle: { color: '#f0f0f0' } }, axisLabel: { color: '#666' } },
+      series: [{
+        type: 'bar',
+        data: indicators.map((i) => Math.round(i.weight * 100)),
+        itemStyle: {
+          color: (params: any) => {
+            const colors = ['#1677ff', '#52c41a', '#fa8c16', '#faad14', '#ff4d4f'];
+            return colors[params.dataIndex % colors.length];
+          },
+          borderRadius: [4, 4, 0, 0],
+        },
+        barMaxWidth: 50,
+        label: { show: true, position: 'top', formatter: '{c}%' },
+      }],
+    };
+  }, [indicatorConfig]);
 
   const rankTableColumns = [
     {
-      title: '排名',
-      dataIndex: 'rank',
-      width: 80,
-      align: 'center' as const,
-      render: (val: number, record: PerformanceStats, index: number) => {
+      title: '排名', dataIndex: 'rank', width: 65, align: 'center' as const,
+      render: (val: number, _: any, index: number) => {
         const realRank = val || index + 1;
         return (
-          <div
-            style={{
-              width: 32,
-              height: 32,
-              borderRadius: realRank <= 3 ? '50%' : 6,
-              background:
-                realRank === 1
-                  ? 'linear-gradient(135deg, #ffd700, #ff8c00)'
-                  : realRank === 2
-                  ? 'linear-gradient(135deg, #c0c0c0, #808080)'
-                  : realRank === 3
-                  ? 'linear-gradient(135deg, #cd7f32, #8b4513)'
-                  : '#f0f0f0',
-              color: realRank <= 3 ? '#fff' : '#666',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              fontWeight: 600,
-              margin: '0 auto',
-            }}
-          >
+          <div style={{ width: 30, height: 30, borderRadius: realRank <= 3 ? '50%' : 6, background: realRank === 1 ? 'linear-gradient(135deg, #ffd700, #ff8c00)' : realRank === 2 ? 'linear-gradient(135deg, #c0c0c0, #808080)' : realRank === 3 ? 'linear-gradient(135deg, #cd7f32, #8b4513)' : '#f0f0f0', color: realRank <= 3 ? '#fff' : '#666', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 600, margin: '0 auto', fontSize: 13 }}>
             {realRank}
           </div>
         );
       },
     },
     {
-      title: '调解员',
-      dataIndex: 'userName',
-      width: 140,
-      render: (val: string, record: PerformanceStats) => (
+      title: '调解员', dataIndex: 'user_name', width: 130,
+      render: (val: string, record: any) => (
         <Space>
-          <div
-            style={{
-              width: 36,
-              height: 36,
-              borderRadius: '50%',
-              background: '#1677ff15',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              color: '#1677ff',
-              fontWeight: 600,
-            }}
-          >
+          <div style={{ width: 34, height: 34, borderRadius: '50%', background: '#1677ff15', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#1677ff', fontWeight: 600 }}>
             {val?.charAt(0)}
           </div>
           <Space direction="vertical" size={0}>
             <span style={{ fontWeight: 500 }}>{val}</span>
-            <span style={{ fontSize: 12, color: '#999' }}>{record.orgName}</span>
+            <span style={{ fontSize: 12, color: '#999' }}>{record.org_name}</span>
           </Space>
         </Space>
       ),
     },
+    { title: '受理数', dataIndex: 'case_count', width: 80, align: 'center' as const, sorter: (a: any, b: any) => (a.case_count || 0) - (b.case_count || 0) },
+    { title: '办结率(%)', dataIndex: 'close_rate', width: 100, align: 'center' as const, render: (v: number) => <span>{(v || 0).toFixed(1)}%</span> },
     {
-      title: '承办案件',
-      dataIndex: 'totalCases',
-      width: 100,
-      align: 'center' as const,
-      sorter: (a: PerformanceStats, b: PerformanceStats) => (a.totalCases || 0) - (b.totalCases || 0),
-      render: (val: number) => <span style={{ fontWeight: 500 }}>{val || 0}</span>,
+      title: '成功率', dataIndex: 'success_rate', width: 150,
+      render: (v: number) => <Progress percent={v || 0} size="small" status={v >= 90 ? 'success' : v >= 70 ? 'active' : 'exception'} strokeColor={v >= 90 ? '#52c41a' : v >= 70 ? '#1677ff' : '#ff4d4f'} />,
+    },
+    { title: '平均天数', dataIndex: 'avg_days', width: 90, align: 'center' as const, render: (v: number) => <span>{(v || 0).toFixed(1)}</span> },
+    { title: '满意度', dataIndex: 'avg_satisfaction', width: 90, align: 'center' as const, render: (v: number) => <Space><StarOutlined style={{ color: '#faad14' }} />{(v || 0).toFixed(1)}</Space> },
+    { title: '催办', dataIndex: 'urge_count', width: 70, align: 'center' as const, render: (v: number) => <Tag color={v > 3 ? 'red' : v > 0 ? 'orange' : 'green'}>{v || 0}</Tag> },
+    {
+      title: '得分', dataIndex: 'total_score', width: 90, align: 'center' as const,
+      render: (v: number) => <Tag color={v >= 90 ? 'green' : v >= 75 ? 'blue' : v >= 60 ? 'orange' : 'red'}><strong>{(v || 0).toFixed(1)}</strong></Tag>,
     },
     {
-      title: '完成案件',
-      dataIndex: 'completedCases',
-      width: 100,
-      align: 'center' as const,
-      sorter: (a: PerformanceStats, b: PerformanceStats) => (a.completedCases || 0) - (b.completedCases || 0),
-      render: (val: number) => <span style={{ color: '#52c41a', fontWeight: 500 }}>{val || 0}</span>,
+      title: '等级', dataIndex: 'level', width: 65, align: 'center' as const,
+      render: (v: string) => <Tag style={{ background: levelColorMap[v] || '#d9d9d9', color: '#fff', border: 'none', fontWeight: 700 }}>{v || '-'}</Tag>,
     },
     {
-      title: '调解次数',
-      dataIndex: 'mediationCount',
-      width: 100,
-      align: 'center' as const,
-      sorter: (a: PerformanceStats, b: PerformanceStats) => (a.mediationCount || 0) - (b.mediationCount || 0),
-    },
-    {
-      title: '成功率',
-      dataIndex: 'mediationSuccessRate',
-      width: 180,
-      sorter: (a: PerformanceStats, b: PerformanceStats) =>
-        (a.mediationSuccessRate || 0) - (b.mediationSuccessRate || 0),
-      render: (val: number) => (
-        <Progress
-          percent={val || 0}
-          size="small"
-          status={val >= 90 ? 'success' : val >= 70 ? 'active' : 'exception'}
-          strokeColor={val >= 90 ? '#52c41a' : val >= 70 ? '#1677ff' : '#ff4d4f'}
-        />
-      ),
-    },
-    {
-      title: '平均耗时',
-      dataIndex: 'avgDuration',
-      width: 120,
-      align: 'center' as const,
-      sorter: (a: PerformanceStats, b: PerformanceStats) => (a.avgDuration || 0) - (b.avgDuration || 0),
-      render: (val: number) => <span>{val ? `${val} 天` : '-'}</span>,
-    },
-    {
-      title: '满意度',
-      dataIndex: 'satisfaction',
-      width: 140,
-      sorter: (a: PerformanceStats, b: PerformanceStats) => (a.satisfaction || 0) - (b.satisfaction || 0),
-      render: (val: number) => (
-        <Space>
-          <StarOutlined style={{ color: '#faad14' }} />
-          <span style={{ fontWeight: 500 }}>{(val || 0).toFixed(1)}</span>
-        </Space>
-      ),
-    },
-    {
-      title: '综合得分',
-      dataIndex: 'score',
-      width: 120,
-      align: 'center' as const,
-      sorter: (a: PerformanceStats, b: PerformanceStats) => (a.score || 0) - (b.score || 0),
-      render: (val: number) => (
-        <Tag color={val >= 90 ? 'green' : val >= 75 ? 'blue' : val >= 60 ? 'orange' : 'red'}>
-          <strong style={{ fontSize: 14 }}>{(val || 0).toFixed(1)}</strong>
-        </Tag>
-      ),
+      title: '操作', width: 80, align: 'center' as const,
+      render: (_: any, record: any) => isAdmin ? (
+        <Tooltip title="创建面谈记录">
+          <Button type="link" size="small" icon={<EditOutlined />} onClick={() => { setSelectedMediator(record); setInterviewModalOpen(true); }} />
+        </Tooltip>
+      ) : null,
     },
   ];
 
-  const orgRankOption = useMemo(() => {
-    const orgStats: Record<string, { name: string; total: number; completed: number }> = {};
-    rankData.forEach((item) => {
-      const key = item.orgId || 'unknown';
-      if (!orgStats[key]) {
-        orgStats[key] = {
-          name: item.orgName || '未分配',
-          total: 0,
-          completed: 0,
-        };
-      }
-      orgStats[key].total += item.totalCases || 0;
-      orgStats[key].completed += item.completedCases || 0;
-    });
-    const sorted = Object.values(orgStats).sort((a, b) => b.total - a.total);
-    return {
-      tooltip: {
-        trigger: 'axis',
-        axisPointer: { type: 'shadow' },
-        backgroundColor: 'rgba(255,255,255,0.95)',
-        borderColor: '#f0f0f0',
-        textStyle: { color: '#333' },
-      },
-      legend: {
-        top: 0,
-      },
-      grid: {
-        left: '3%',
-        right: '4%',
-        bottom: '3%',
-        containLabel: true,
-      },
-      xAxis: {
-        type: 'category',
-        data: sorted.map((s) => s.name),
-        axisLabel: { color: '#666', rotate: sorted.length > 5 ? 30 : 0 },
-      },
-      yAxis: {
-        type: 'value',
-        splitLine: { lineStyle: { color: '#f0f0f0' } },
-        axisLabel: { color: '#666' },
-      },
-      series: [
-        {
-          name: '承办总数',
-          type: 'bar',
-          data: sorted.map((s) => s.total),
-          itemStyle: {
-            color: '#1677ff',
-            borderRadius: [4, 4, 0, 0],
-          },
-          barMaxWidth: 40,
-        },
-        {
-          name: '完成数',
-          type: 'bar',
-          data: sorted.map((s) => s.completed),
-          itemStyle: {
-            color: '#52c41a',
-            borderRadius: [4, 4, 0, 0],
-          },
-          barMaxWidth: 40,
-        },
-      ],
-    };
-  }, [rankData]);
-
-  const radarOption = useMemo(() => {
-    const avg = {
-      totalCases: 0,
-      completedRate: 0,
-      successRate: 0,
-      satisfaction: 0,
-      efficiency: 0,
-    };
-    if (rankData.length > 0) {
-      avg.totalCases = rankData.reduce((s, r) => s + (r.totalCases || 0), 0) / rankData.length;
-      avg.completedRate = rankData.reduce((s, r) => s + ((r.completedCases || 0) / Math.max(r.totalCases || 1, 1)) * 100, 0) / rankData.length;
-      avg.successRate = rankData.reduce((s, r) => s + (r.mediationSuccessRate || 0), 0) / rankData.length;
-      avg.satisfaction = rankData.reduce((s, r) => s + (r.satisfaction || 0), 0) / rankData.length;
-      avg.efficiency = rankData.reduce((s, r) => s + Math.max(100 - (r.avgDuration || 0) * 10, 0), 0) / rankData.length;
+  const handleExportExcel = async () => {
+    try {
+      const y = selectedMonth.year();
+      const m = selectedMonth.month() + 1;
+      const res = await performanceService.exportExcel({ year: y, month: m });
+      const blob = new Blob([res as any], { type: 'text/csv;charset=utf-8' });
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `performance_${y}_${String(m).padStart(2, '0')}.csv`;
+      link.click();
+      window.URL.revokeObjectURL(url);
+      message.success('导出成功');
+    } catch (error) {
+      message.error('导出失败');
     }
-    const top = rankData[0] || {};
-    const topCompletedRate = ((top.completedCases || 0) / Math.max(top.totalCases || 1, 1)) * 100;
-    return {
-      tooltip: {
-        backgroundColor: 'rgba(255,255,255,0.95)',
-        borderColor: '#f0f0f0',
-        textStyle: { color: '#333' },
-      },
-      legend: {
-        data: ['TOP1', '平均水平'],
-        top: 0,
-      },
-      radar: {
-        indicator: [
-          { name: '承办量', max: Math.max(50, avg.totalCases * 2) },
-          { name: '完成率', max: 100 },
-          { name: '成功率', max: 100 },
-          { name: '满意度', max: 10 },
-          { name: '效率分', max: 100 },
-        ],
-        splitArea: {
-          areaStyle: {
-            color: ['#fafafa', '#fff'],
-          },
-        },
-      },
-      series: [
-        {
-          type: 'radar',
-          data: [
-            {
-              value: [
-                top.totalCases || 0,
-                topCompletedRate || 0,
-                top.mediationSuccessRate || 0,
-                top.satisfaction || 0,
-                Math.max(100 - (top.avgDuration || 0) * 10, 0),
-              ],
-              name: 'TOP1',
-              areaStyle: { color: 'rgba(22,119,255,0.3)' },
-              lineStyle: { color: '#1677ff' },
-              itemStyle: { color: '#1677ff' },
-            },
-            {
-              value: [avg.totalCases, avg.completedRate, avg.successRate, avg.satisfaction, avg.efficiency],
-              name: '平均水平',
-              areaStyle: { color: 'rgba(82,196,26,0.2)' },
-              lineStyle: { color: '#52c41a', type: 'dashed' },
-              itemStyle: { color: '#52c41a' },
-            },
-          ],
-        },
-      ],
-    };
-  }, [rankData]);
+  };
 
-  const scoreTrendOption = useMemo(() => {
-    return {
-      tooltip: {
-        trigger: 'axis',
-        backgroundColor: 'rgba(255,255,255,0.95)',
-        borderColor: '#f0f0f0',
-        textStyle: { color: '#333' },
-      },
-      grid: {
-        left: '3%',
-        right: '4%',
-        bottom: '3%',
-        containLabel: true,
-      },
-      xAxis: {
-        type: 'category',
-        boundaryGap: false,
-        data: Array.from({ length: 12 }, (_, i) => `${i + 1}月`),
-        axisLine: { lineStyle: { color: '#f0f0f0' } },
-        axisLabel: { color: '#666' },
-      },
-      yAxis: {
-        type: 'value',
-        min: 60,
-        max: 100,
-        splitLine: { lineStyle: { color: '#f0f0f0' } },
-        axisLabel: { color: '#666' },
-      },
-      series: [
-        {
-          type: 'line',
-          smooth: true,
-          data: [72, 75, 78, 80, 79, 82, 85, 84, 86, 88, 90, 89],
-          itemStyle: { color: '#722ed1' },
-          lineStyle: { width: 3 },
-          areaStyle: {
-            color: {
-              type: 'linear',
-              x: 0, y: 0, x2: 0, y2: 1,
-              colorStops: [
-                { offset: 0, color: 'rgba(114,46,209,0.3)' },
-                { offset: 1, color: 'rgba(114,46,209,0.02)' },
-              ],
-            },
-          },
-          markLine: {
-            data: [{ type: 'average', name: '平均' }],
-            lineStyle: { color: '#faad14' },
-          },
-        },
-      ],
-    };
-  }, []);
+  const handleWeightUpdate = async () => {
+    try {
+      const values = weightForm.getFieldsValue();
+      const indicators = indicatorConfig.indicators.map((ind) => ({
+        id: ind.id,
+        weight: values[`weight_${ind.id}`],
+      }));
+      await performanceService.updateIndicatorConfig(indicators);
+      message.success('权重更新成功');
+      setWeightModalOpen(false);
+      fetchIndicators();
+      fetchDashboard();
+    } catch (error) {
+      message.error('权重更新失败');
+    }
+  };
+
+  const handleCreateInterview = async () => {
+    try {
+      const values = await interviewForm.validateFields();
+      await performanceService.createInterview({
+        ...values,
+        userId: selectedMediator?.user_id || selectedMediator?.userId,
+        userName: selectedMediator?.user_name || selectedMediator?.userName,
+        totalScore: selectedMediator?.total_score || selectedMediator?.score,
+        level: selectedMediator?.level,
+      });
+      message.success('面谈记录创建成功');
+      setInterviewModalOpen(false);
+      interviewForm.resetFields();
+      fetchInterviews(1);
+    } catch (error) {
+      message.error('创建面谈记录失败');
+    }
+  };
+
+  const handleViewInterview = async (id: number) => {
+    try {
+      const res = await performanceService.getInterviewDetail(id);
+      const data = (res as any)?.data || res || {};
+      setInterviewDetail(data);
+      setInterviewDetailOpen(true);
+    } catch (error) {
+      message.error('获取面谈记录失败');
+    }
+  };
+
+  const openWeightModal = () => {
+    const formValues: Record<string, number> = {};
+    indicatorConfig.indicators.forEach((ind) => {
+      formValues[`weight_${ind.id}`] = ind.weight;
+    });
+    weightForm.setFieldsValue(formValues);
+    setWeightModalOpen(true);
+  };
+
+  const interviewColumns = [
+    { title: '编号', dataIndex: 'interview_no', width: 140 },
+    { title: '调解员', dataIndex: 'user_name', width: 90 },
+    { title: '类型', dataIndex: 'interview_type_name', width: 90 },
+    { title: '面谈人', dataIndex: 'interviewer_name', width: 90 },
+    { title: '面谈时间', dataIndex: 'interview_time', width: 150 },
+    {
+      title: '状态', dataIndex: 'status_name', width: 80,
+      render: (v: string) => <Tag color={v === '已确认' ? 'green' : v === '待确认' ? 'orange' : 'default'}>{v}</Tag>,
+    },
+    {
+      title: '操作', width: 60,
+      render: (_: any, record: any) => (
+        <Button type="link" size="small" icon={<EyeOutlined />} onClick={() => handleViewInterview(record.id)} />
+      ),
+    },
+  ];
 
   return (
     <Space direction="vertical" size={16} style={{ width: '100%' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <h2 style={{ margin: 0 }}>
           <TrophyOutlined style={{ color: '#faad14', marginRight: 8 }} />
-          绩效考核
+          调解员绩效考核看板
         </h2>
-        <RangePicker
-          value={dateRange}
-          onChange={(dates) => {
-            if (dates && dates[0] && dates[1]) {
-              setDateRange([dates[0] as Dayjs, dates[1] as Dayjs]);
-            }
-          }}
-          style={{ width: 320 }}
-        />
+        <Space>
+          <MonthPicker
+            value={selectedMonth}
+            onChange={(date) => { if (date) setSelectedMonth(date); }}
+            style={{ width: 180 }}
+            allowClear={false}
+          />
+          {isAdmin && (
+            <Button icon={<SettingOutlined />} onClick={openWeightModal}>考核权重</Button>
+          )}
+          <Button icon={<DownloadOutlined />} onClick={handleExportExcel}>导出Excel</Button>
+        </Space>
       </div>
 
-      <Row gutter={[16, 16]}>
-        <Col xs={24} sm={12} md={6}>
-          <Card bordered={false} style={{ borderRadius: 12 }} className="stat-card">
-            <Space align="center" style={{ width: '100%', justifyContent: 'space-between' }}>
-              <div>
-                <div style={{ color: '#666', fontSize: 14, marginBottom: 8 }}>考核总人数</div>
-                <Statistic value={summary.totalUsers || rankData.length || 0} valueStyle={{ color: '#1677ff', fontSize: 26 }} />
+      <Row gutter={[12, 12]}>
+        {summaryCards.map((card, idx) => (
+          <Col xs={12} sm={8} md={4} key={idx}>
+            <Card bordered={false} style={{ borderRadius: 12 }} bodyStyle={{ padding: '16px 20px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <div>
+                  <div style={{ color: '#999', fontSize: 13, marginBottom: 6 }}>{card.title}</div>
+                  <div style={{ display: 'flex', alignItems: 'baseline', gap: 4 }}>
+                    <Statistic
+                      value={card.value}
+                      precision={card.precision}
+                      suffix={card.suffix}
+                      valueStyle={{ color: card.color, fontSize: 22, fontWeight: 700 }}
+                    />
+                    {card.change !== undefined && <ChangeTag value={card.change} />}
+                  </div>
+                </div>
+                <div style={{ width: 46, height: 46, borderRadius: 12, background: card.bg, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 22, color: card.color }}>
+                  {card.icon}
+                </div>
               </div>
-              <div
-                style={{
-                  width: 52,
-                  height: 52,
-                  borderRadius: 12,
-                  background: '#1677ff15',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  fontSize: 26,
-                  color: '#1677ff',
-                }}
-              >
-                <TeamOutlined />
-              </div>
-            </Space>
-          </Card>
-        </Col>
-        <Col xs={24} sm={12} md={6}>
-          <Card bordered={false} style={{ borderRadius: 12 }} className="stat-card">
-            <Space align="center" style={{ width: '100%', justifyContent: 'space-between' }}>
-              <div>
-                <div style={{ color: '#666', fontSize: 14, marginBottom: 8 }}>承办案件总数</div>
-                <Statistic
-                  value={summary.totalCases || rankData.reduce((s, r) => s + (r.totalCases || 0), 0) || 0}
-                  valueStyle={{ color: '#722ed1', fontSize: 26 }}
-                  suffix={<Tag color="green" icon={<RiseOutlined />} style={{ marginLeft: 4 }}>+{(summary.caseGrowth || 12.5).toFixed(1)}%</Tag>}
-                />
-              </div>
-              <div
-                style={{
-                  width: 52,
-                  height: 52,
-                  borderRadius: 12,
-                  background: '#722ed115',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  fontSize: 26,
-                  color: '#722ed1',
-                }}
-              >
-                <FileTextOutlined />
-              </div>
-            </Space>
-          </Card>
-        </Col>
-        <Col xs={24} sm={12} md={6}>
-          <Card bordered={false} style={{ borderRadius: 12 }} className="stat-card">
-            <Space align="center" style={{ width: '100%', justifyContent: 'space-between' }}>
-              <div>
-                <div style={{ color: '#666', fontSize: 14, marginBottom: 8 }}>平均成功率</div>
-                <Statistic
-                  value={summary.avgSuccessRate || (rankData.length > 0 ? rankData.reduce((s, r) => s + (r.mediationSuccessRate || 0), 0) / rankData.length : 85.6)}
-                  precision={1}
-                  suffix="%"
-                  valueStyle={{ color: '#52c41a', fontSize: 26 }}
-                />
-              </div>
-              <div
-                style={{
-                  width: 52,
-                  height: 52,
-                  borderRadius: 12,
-                  background: '#52c41a15',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  fontSize: 26,
-                  color: '#52c41a',
-                }}
-              >
-                <CheckCircleOutlined />
-              </div>
-            </Space>
-          </Card>
-        </Col>
-        <Col xs={24} sm={12} md={6}>
-          <Card bordered={false} style={{ borderRadius: 12 }} className="stat-card">
-            <Space align="center" style={{ width: '100%', justifyContent: 'space-between' }}>
-              <div>
-                <div style={{ color: '#666', fontSize: 14, marginBottom: 8 }}>平均满意度</div>
-                <Statistic
-                  value={summary.avgSatisfaction || (rankData.length > 0 ? rankData.reduce((s, r) => s + (r.satisfaction || 0), 0) / rankData.length : 9.2)}
-                  precision={1}
-                  valueStyle={{ color: '#faad14', fontSize: 26 }}
-                  prefix={<StarOutlined style={{ fontSize: 20 }} />}
-                />
-              </div>
-              <div
-                style={{
-                  width: 52,
-                  height: 52,
-                  borderRadius: 12,
-                  background: '#faad1415',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  fontSize: 26,
-                  color: '#faad14',
-                }}
-              >
-                <SmileOutlined />
-              </div>
-            </Space>
-          </Card>
-        </Col>
+            </Card>
+          </Col>
+        ))}
       </Row>
 
       <Row gutter={[16, 16]}>
         <Col xs={24} lg={10}>
-          <Card
-            title="组织考核对比"
-            bordered={false}
-            style={{ borderRadius: 12 }}
+          <Card title="绩效趋势(本月vs上月)" bordered={false} style={{ borderRadius: 12 }}
+            extra={<Tag color="purple">{selectedMonth.format('YYYY年')}</Tag>}
           >
-            <ReactECharts option={orgRankOption} style={{ height: 360 }} notMerge={true} lazyUpdate={true} />
+            <ReactECharts option={trendOption} style={{ height: 340 }} notMerge lazyUpdate />
           </Card>
         </Col>
         <Col xs={24} lg={7}>
-          <Card
-            title="能力雷达分析"
-            bordered={false}
-            style={{ borderRadius: 12 }}
+          <Card title="能力雷达分析" bordered={false} style={{ borderRadius: 12 }}
             extra={<Tag color="purple">TOP1 vs 均值</Tag>}
           >
-            <ReactECharts option={radarOption} style={{ height: 360 }} notMerge={true} lazyUpdate={true} />
+            <ReactECharts option={radarOption} style={{ height: 340 }} notMerge lazyUpdate />
           </Card>
         </Col>
         <Col xs={24} lg={7}>
-          <Card
-            title="综合得分趋势"
-            bordered={false}
-            style={{ borderRadius: 12 }}
-            extra={<Tag color="blue">近12个月</Tag>}
+          <Card title="考核权重分布" bordered={false} style={{ borderRadius: 12 }}
+            extra={isAdmin ? <Button type="link" size="small" onClick={openWeightModal}>调整权重</Button> : null}
           >
-            <ReactECharts option={scoreTrendOption} style={{ height: 360 }} notMerge={true} lazyUpdate={true} />
+            <ReactECharts option={indicatorBarOption} style={{ height: 340 }} notMerge lazyUpdate />
           </Card>
         </Col>
       </Row>
 
-      <Card
-        title="调解员排行榜"
-        bordered={false}
-        style={{ borderRadius: 12 }}
-        extra={
-          <Space>
-            <Tag color="green"><ArrowUpOutlined /> 优秀: ≥90分</Tag>
-            <Tag color="blue"><ArrowUpOutlined /> 良好: 75-89分</Tag>
-            <Tag color="orange"><ClockCircleOutlined /> 合格: 60-74分</Tag>
-            <Tag color="red"><ArrowDownOutlined /> 待改进: {'<60分'}</Tag>
-          </Space>
-        }
+      <Row gutter={[16, 16]}>
+        <Col xs={24} lg={16}>
+          <Card title="调解员绩效排行" bordered={false} style={{ borderRadius: 12 }}
+            extra={
+              <Space>
+                <Tag color="green"><ArrowUpOutlined /> 优秀: ≥90</Tag>
+                <Tag color="blue">良好: 75-89</Tag>
+                <Tag color="orange">合格: 60-74</Tag>
+                <Tag color="red"><ArrowDownOutlined /> 待改进: &lt;60</Tag>
+              </Space>
+            }
+          >
+            <Table
+              columns={rankTableColumns as any}
+              dataSource={dashboardData.mediators || []}
+              rowKey={(r: any) => r.user_id || r.userId || Math.random()}
+              loading={loading}
+              pagination={{ showSizeChanger: true, showTotal: (t) => `共 ${t} 人`, pageSize: 10 }}
+              scroll={{ x: 1100 }}
+              size="middle"
+            />
+          </Card>
+        </Col>
+        <Col xs={24} lg={8}>
+          <Card title="绩效面谈记录" bordered={false} style={{ borderRadius: 12 }}
+            extra={<Tag>{selectedMonth.format('YYYY-MM')}</Tag>}
+          >
+            <Table
+              columns={interviewColumns}
+              dataSource={interviewList}
+              rowKey={(r: any) => r.id}
+              pagination={{
+                current: interviewPage,
+                total: interviewTotal,
+                pageSize: 5,
+                onChange: fetchInterviews,
+                size: 'small',
+              }}
+              size="small"
+            />
+          </Card>
+        </Col>
+      </Row>
+
+      <Modal
+        title="自定义考核权重"
+        open={weightModalOpen}
+        onOk={handleWeightUpdate}
+        onCancel={() => setWeightModalOpen(false)}
+        width={560}
+        okText="保存"
       >
-        <Table<PerformanceStats>
-          columns={rankTableColumns as any}
-          dataSource={rankData.length > 0 ? rankData : [
-            {
-              userId: '1', userName: '张建国', orgId: 'org_002', orgName: '东街调解委',
-              totalCases: 48, completedCases: 42, mediationCount: 68,
-              mediationSuccessRate: 95.8, avgDuration: 5.2, satisfaction: 9.6, score: 94.5, rank: 1,
-            },
-            {
-              userId: '2', userName: '李淑芬', orgId: 'org_003', orgName: '西街调解委',
-              totalCases: 42, completedCases: 38, mediationCount: 56,
-              mediationSuccessRate: 92.9, avgDuration: 6.1, satisfaction: 9.3, score: 89.2, rank: 2,
-            },
-            {
-              userId: '3', userName: '王志强', orgId: 'org_004', orgName: '南区调解委',
-              totalCases: 39, completedCases: 34, mediationCount: 52,
-              mediationSuccessRate: 89.7, avgDuration: 7.3, satisfaction: 8.8, score: 85.6, rank: 3,
-            },
-            {
-              userId: '4', userName: '赵美玲', orgId: 'org_005', orgName: '北区调解委',
-              totalCases: 35, completedCases: 31, mediationCount: 45,
-              mediationSuccessRate: 91.4, avgDuration: 6.8, satisfaction: 9.1, score: 86.3, rank: 4,
-            },
-            {
-              userId: '5', userName: '陈德明', orgId: 'org_001', orgName: '综治中心',
-              totalCases: 31, completedCases: 28, mediationCount: 40,
-              mediationSuccessRate: 90.3, avgDuration: 5.9, satisfaction: 9.2, score: 84.1, rank: 5,
-            },
-            {
-              userId: '6', userName: '刘小红', orgId: 'org_002', orgName: '东街调解委',
-              totalCases: 28, completedCases: 24, mediationCount: 36,
-              mediationSuccessRate: 87.5, avgDuration: 8.2, satisfaction: 8.5, score: 78.6, rank: 6,
-            },
-            {
-              userId: '7', userName: '孙大伟', orgId: 'org_003', orgName: '西街调解委',
-              totalCases: 25, completedCases: 21, mediationCount: 32,
-              mediationSuccessRate: 84.0, avgDuration: 9.1, satisfaction: 8.2, score: 74.3, rank: 7,
-            },
-            {
-              userId: '8', userName: '周丽萍', orgId: 'org_004', orgName: '南区调解委',
-              totalCases: 22, completedCases: 18, mediationCount: 28,
-              mediationSuccessRate: 81.8, avgDuration: 10.5, satisfaction: 7.9, score: 68.9, rank: 8,
-            },
-          ]}
-          rowKey="userId"
-          loading={loading}
-          pagination={{
-            showSizeChanger: true,
-            showQuickJumper: true,
-            showTotal: (total) => `共 ${total} 人`,
-            pageSize: 10,
-          }}
-          scroll={{ x: 1300 }}
-        />
-      </Card>
+        <div style={{ marginBottom: 12, color: '#666', fontSize: 13 }}>
+          权重总和必须为 100%，当前用于计算调解员综合得分
+        </div>
+        <Form form={weightForm} layout="vertical">
+          {indicatorConfig.indicators.map((ind) => (
+            <Form.Item key={ind.id} label={`${ind.indicator_name} (${ind.indicator_code})`} name={`weight_${ind.id}`}
+              rules={[{ required: true, message: '请输入权重' }]}
+              extra={ind.description}
+            >
+              <InputNumber min={0} max={1} step={0.05} style={{ width: '100%' }}
+                formatter={(v) => `${((v || 0) as number) * 100}%`}
+                parser={(v) => (parseFloat((v || '0').replace('%', '')) / 100) as 0}
+              />
+            </Form.Item>
+          ))}
+        </Form>
+        <div style={{ color: '#faad14', fontSize: 12 }}>
+          <RiseOutlined /> 权重调整后，下次计算考核得分时生效
+        </div>
+      </Modal>
+
+      <Modal
+        title={`创建绩效面谈 - ${selectedMediator?.user_name || selectedMediator?.userName || ''}`}
+        open={interviewModalOpen}
+        onOk={handleCreateInterview}
+        onCancel={() => { setInterviewModalOpen(false); interviewForm.resetFields(); }}
+        width={640}
+        okText="创建"
+      >
+        <Form form={interviewForm} layout="vertical">
+          <Row gutter={16}>
+            <Col span={12}>
+              <Form.Item label="面谈类型" name="interviewType" rules={[{ required: true, message: '请选择面谈类型' }]}>
+                <Select options={[
+                  { value: 1, label: '绩效反馈' },
+                  { value: 2, label: '改进计划' },
+                  { value: 3, label: '表彰面谈' },
+                  { value: 4, label: '预警面谈' },
+                ]} />
+              </Form.Item>
+            </Col>
+            <Col span={12}>
+              <Form.Item label="面谈时间" name="interviewTime" rules={[{ required: true, message: '请选择时间' }]}>
+                <Input type="datetime-local" />
+              </Form.Item>
+            </Col>
+          </Row>
+          <Form.Item label="面谈地点" name="interviewPlace">
+            <Input placeholder="请输入面谈地点" />
+          </Form.Item>
+          <Form.Item label="周期" name="periodValue" initialValue={selectedMonth.format('YYYY-MM')}>
+            <Input disabled />
+          </Form.Item>
+          <Form.Item name="periodType" initialValue={1} hidden><Input /></Form.Item>
+          <Form.Item label="工作亮点" name="strengths">
+            <Input.TextArea rows={2} placeholder="调解员在本考核期的工作亮点" />
+          </Form.Item>
+          <Form.Item label="待改进方面" name="weaknesses">
+            <Input.TextArea rows={2} placeholder="需要改进的方面" />
+          </Form.Item>
+          <Form.Item label="改进计划" name="improvementPlan">
+            <Input.TextArea rows={2} placeholder="下一周期的改进计划" />
+          </Form.Item>
+          <Form.Item label="下期目标" name="targetNextPeriod">
+            <Input.TextArea rows={2} placeholder="下一考核期的目标" />
+          </Form.Item>
+        </Form>
+      </Modal>
+
+      <Drawer
+        title="面谈记录详情"
+        open={interviewDetailOpen}
+        onClose={() => setInterviewDetailOpen(false)}
+        width={520}
+      >
+        {interviewDetail && (
+          <Descriptions column={1} bordered size="small">
+            <Descriptions.Item label="面谈编号">{interviewDetail.interview_no}</Descriptions.Item>
+            <Descriptions.Item label="调解员">{interviewDetail.user_name}</Descriptions.Item>
+            <Descriptions.Item label="面谈人">{interviewDetail.interviewer_name}</Descriptions.Item>
+            <Descriptions.Item label="面谈类型">{interviewDetail.interview_type_name}</Descriptions.Item>
+            <Descriptions.Item label="面谈时间">{interviewDetail.interview_time}</Descriptions.Item>
+            <Descriptions.Item label="面谈地点">{interviewDetail.interview_place}</Descriptions.Item>
+            <Descriptions.Item label="考核得分">{interviewDetail.total_score}</Descriptions.Item>
+            <Descriptions.Item label="考核等级">
+              <Tag style={{ background: levelColorMap[interviewDetail.level] || '#d9d9d9', color: '#fff', border: 'none' }}>{interviewDetail.level}</Tag>
+            </Descriptions.Item>
+            <Descriptions.Item label="状态">
+              <Tag color={interviewDetail.status === 2 ? 'green' : 'orange'}>{interviewDetail.status_name}</Tag>
+            </Descriptions.Item>
+            <Divider />
+            <Descriptions.Item label="工作亮点">{interviewDetail.strengths || '-'}</Descriptions.Item>
+            <Descriptions.Item label="待改进方面">{interviewDetail.weaknesses || '-'}</Descriptions.Item>
+            <Descriptions.Item label="改进计划">{interviewDetail.improvement_plan || '-'}</Descriptions.Item>
+            <Descriptions.Item label="下期目标">{interviewDetail.target_next_period || '-'}</Descriptions.Item>
+            <Descriptions.Item label="调解员反馈">{interviewDetail.mediator_comment || '-'}</Descriptions.Item>
+          </Descriptions>
+        )}
+      </Drawer>
     </Space>
   );
 };

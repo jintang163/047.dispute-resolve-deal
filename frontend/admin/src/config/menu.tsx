@@ -109,7 +109,7 @@ export const menuConfig: MenuItem[] = [
   },
   {
     key: 'performance',
-    label: '绩效考核',
+    label: '绩效考核看板',
     icon: React.createElement(TrophyOutlined),
     path: '/performance',
   },

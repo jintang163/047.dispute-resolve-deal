@@ -121,12 +121,93 @@ export interface PerformanceStats {
   satisfaction?: number;
   score?: number;
   rank?: number;
+  urgeCount?: number;
+  closeRate?: number;
+  avgDays?: number;
+  avgSatisfaction?: number;
+  totalScore?: number;
+  level?: string;
+  caseCount?: number;
+  closedCount?: number;
+  successRate?: number;
 }
 
 export interface PerformanceParams {
   startDate?: string;
   endDate?: string;
   orgId?: string;
+  year?: number;
+  month?: number;
+  userId?: number;
+  organizationId?: number;
+}
+
+export interface PerformanceDashboardData {
+  summary: {
+    year: number;
+    month: number;
+    mediatorCount: number;
+    totalCases: number;
+    totalClosed: number;
+    totalSuccess: number;
+    totalUrge: number;
+    avgCloseRate: number;
+    avgSuccessRate: number;
+    avgDays: number;
+    avgSatisfaction: number;
+    avgScore: number;
+  };
+  mediators: PerformanceStats[];
+}
+
+export interface PerformanceMonthComparison {
+  current: Record<string, any>;
+  previous: Record<string, any>;
+  comparison: {
+    caseCountChange: number;
+    closeRateChange: number;
+    successRateChange: number;
+    avgDaysChange: number;
+    avgSatisfactionChange: number;
+    urgeCountChange: number;
+    totalScoreChange: number;
+  };
+  trend: Record<string, any>[];
+}
+
+export interface IndicatorConfig {
+  id: number;
+  indicator_code: string;
+  indicator_name: string;
+  indicator_type: number;
+  weight: number;
+  max_score: number;
+  description: string;
+  status: number;
+}
+
+export interface PerformanceInterview {
+  id: number;
+  interview_no: string;
+  user_id: number;
+  user_name: string;
+  interviewer_id: number;
+  interviewer_name: string;
+  interview_time: string;
+  interview_place: string;
+  interview_type: number;
+  interview_type_name: string;
+  strengths: string;
+  weaknesses: string;
+  improvement_plan: string;
+  target_next_period: string;
+  mediator_comment: string;
+  status: number;
+  status_name: string;
+  total_score: number;
+  level: string;
+  period_type: number;
+  period_value: string;
 }
 
 export const userService = {
@@ -209,14 +290,61 @@ export const mediationService = {
 
 export const performanceService = {
   getStats: (params?: PerformanceParams) => {
-    return request.get<PerformanceStats[]>('/performance/stats', { params });
+    return request.get<PerformanceStats[]>('/v1/performance', { params });
   },
 
   getRank: (params?: PerformanceParams) => {
-    return request.get<PerformanceStats[]>('/performance/rank', { params });
+    return request.get<PerformanceStats[]>('/v1/performance/ranking', { params });
   },
 
   getSummary: (params?: PerformanceParams) => {
-    return request.get<any>('/performance/summary', { params });
+    return request.get<any>('/v1/performance/dashboard', { params });
+  },
+
+  getDashboard: (params?: PerformanceParams) => {
+    return request.get<PerformanceDashboardData>('/v1/performance/dashboard', { params });
+  },
+
+  getMonthComparison: (params?: PerformanceParams) => {
+    return request.get<PerformanceMonthComparison>('/v1/performance/month-comparison', { params });
+  },
+
+  getTrend: (params?: PerformanceParams) => {
+    return request.get<any>('/v1/performance/trend', { params });
+  },
+
+  getIndicatorConfig: () => {
+    return request.get<{ indicators: IndicatorConfig[]; totalWeight: number }>('/v1/performance/indicator-config');
+  },
+
+  updateIndicatorConfig: (indicators: { id: number; weight: number }[]) => {
+    return request.put('/v1/performance/indicator-config', { indicators });
+  },
+
+  getInterviewList: (params?: any) => {
+    return request.get('/v1/performance/interview', { params });
+  },
+
+  createInterview: (data: any) => {
+    return request.post('/v1/performance/interview', data);
+  },
+
+  getInterviewDetail: (id: number) => {
+    return request.get(`/v1/performance/interview/${id}`);
+  },
+
+  confirmInterview: (id: number, mediatorComment: string) => {
+    return request.post(`/v1/performance/interview/${id}/confirm`, { mediatorComment });
+  },
+
+  calculateScore: (data: any) => {
+    return request.post('/v1/performance/calculate', data);
+  },
+
+  exportExcel: (params?: PerformanceParams) => {
+    return request.get('/v1/performance/export', {
+      params,
+      responseType: 'blob',
+    } as any);
   },
 };

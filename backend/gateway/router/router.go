@@ -222,6 +222,18 @@ func RegisterRoutes(h *app.Hertz) {
 			performance.GET("/trend", handler.GetPerformanceTrend)
 			performance.GET("/ranking", handler.GetPerformanceRanking)
 			performance.GET("/indicator-config", handler.GetPerformanceIndicatorConfig)
+			performance.PUT("/indicator-config", handler.UpdatePerformanceIndicatorConfig)
+			performance.GET("/dashboard", handler.GetPerformanceDashboard)
+			performance.GET("/month-comparison", handler.GetPerformanceMonthComparison)
+			performance.GET("/export", handler.ExportPerformanceExcel)
+
+			interview := performance.Group("/interview")
+			{
+				interview.GET("", handler.GetPerformanceInterviewList)
+				interview.POST("", handler.CreatePerformanceInterview)
+				interview.GET("/:id", handler.GetPerformanceInterviewDetail)
+				interview.POST("/:id/confirm", handler.ConfirmPerformanceInterview)
+			}
 		}
 
 		notification := userAuth.Group("/notification")
