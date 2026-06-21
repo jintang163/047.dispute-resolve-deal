@@ -19,6 +19,8 @@ import {
   ToolOutlined,
   BookOutlined,
   PlusOutlined,
+  HeartOutlined,
+  CalendarOutlined,
 } from '@ant-design/icons';
 
 export interface MenuItem {
@@ -194,6 +196,25 @@ export const menuConfig: MenuItem[] = [
         label: '新增案例',
         icon: React.createElement(PlusOutlined),
         path: '/case-library/create',
+      },
+    ],
+  },
+  {
+    key: 'counseling',
+    label: '心理咨询服务',
+    icon: React.createElement(HeartOutlined),
+    children: [
+      {
+        key: 'counselor-list',
+        label: '心理咨询师管理',
+        icon: React.createElement(UserOutlined),
+        path: '/counseling/counselor',
+      },
+      {
+        key: 'counseling-appointment',
+        label: '预约管理',
+        icon: React.createElement(CalendarOutlined),
+        path: '/counseling/appointment',
       },
     ],
   },

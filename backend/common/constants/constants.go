@@ -290,6 +290,38 @@ const (
 	MediationTemplateCategoryTraffic      = "traffic"
 	MediationTemplateCategoryConsumer     = "consumer"
 	MediationTemplateCategoryOther        = "other"
+
+	CounselorStatusDisabled = 0
+	CounselorStatusEnabled  = 1
+
+	CounselorConsultTypeVideo  = 1
+	CounselorConsultTypeVoice  = 2
+	CounselorConsultTypeOffline = 3
+
+	CounselorAppointmentStatusPending    = 10
+	CounselorAppointmentStatusConfirmed  = 20
+	CounselorAppointmentStatusOngoing    = 30
+	CounselorAppointmentStatusCompleted  = 40
+	CounselorAppointmentStatusCancelled  = 50
+	CounselorAppointmentStatusExpired    = 60
+
+	CounselorAppointmentSourceAdmin    = 1
+	CounselorAppointmentSourceSelf     = 2
+	CounselorAppointmentSourceSystem   = 3
+
+	CounselorEmergencyLevelNormal   = 0
+	CounselorEmergencyLevelAttention = 1
+	CounselorEmergencyLevelUrgent    = 2
+	CounselorEmergencyLevelHighRisk  = 3
+
+	CounselorScheduleTypeRest       = 1
+	CounselorScheduleTypeAppointment = 2
+	CounselorScheduleTypeOther      = 3
+
+	RedisKeyPrefixCounselor = "counselor:"
+	RedisKeyPrefixAppointment = "appointment:"
+
+	MinIOPathCounselor = "counselor"
 )
 
 var MediationTemplateCategoryMap = map[string]string{
@@ -450,5 +482,44 @@ var LegalAidConsultStatusMap = map[int]string{
 	LegalAidConsultStatusCompleted: "已完成",
 	LegalAidConsultStatusCanceled:  "已取消",
 	LegalAidConsultStatusTimeout:   "已超时",
+}
+
+var CounselorStatusMap = map[int]string{
+	CounselorStatusDisabled: "停用",
+	CounselorStatusEnabled:  "启用",
+}
+
+var CounselorConsultTypeMap = map[int]string{
+	CounselorConsultTypeVideo:   "线上视频",
+	CounselorConsultTypeVoice:   "线上语音",
+	CounselorConsultTypeOffline: "线下面谈",
+}
+
+var CounselorAppointmentStatusMap = map[int]string{
+	CounselorAppointmentStatusPending:   "待确认",
+	CounselorAppointmentStatusConfirmed: "已确认",
+	CounselorAppointmentStatusOngoing:   "咨询中",
+	CounselorAppointmentStatusCompleted: "已完成",
+	CounselorAppointmentStatusCancelled: "已取消",
+	CounselorAppointmentStatusExpired:   "已过期",
+}
+
+var CounselorAppointmentSourceMap = map[int]string{
+	CounselorAppointmentSourceAdmin:  "管理员创建",
+	CounselorAppointmentSourceSelf:   "自助预约",
+	CounselorAppointmentSourceSystem: "系统推荐",
+}
+
+var CounselorEmergencyLevelMap = map[int]string{
+	CounselorEmergencyLevelNormal:    "普通",
+	CounselorEmergencyLevelAttention: "关注",
+	CounselorEmergencyLevelUrgent:    "紧急",
+	CounselorEmergencyLevelHighRisk:  "高危",
+}
+
+var CounselorScheduleTypeMap = map[int]string{
+	CounselorScheduleTypeRest:       "休息",
+	CounselorScheduleTypeAppointment: "已有预约",
+	CounselorScheduleTypeOther:      "其他事务",
 }
 

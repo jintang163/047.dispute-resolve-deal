@@ -402,6 +402,41 @@ func RegisterRoutes(h *app.Hertz) {
 			legalAid.GET("/case/:caseId/records", handler.GetCaseLegalAidRecords)
 		}
 
+		counseling := userAuth.Group("/counseling")
+		{
+			counselor := counseling.Group("/counselor")
+			{
+				counselor.GET("", handler.GetCounselorList)
+				counselor.GET("/:id", handler.GetCounselorDetail)
+				counselor.POST("", handler.CreateCounselor)
+				counselor.PUT("/:id", handler.UpdateCounselor)
+				counselor.DELETE("/:id", handler.DeleteCounselor)
+				counselor.GET("/:id/available-slots", handler.GetCounselorAvailableSlots)
+				counselor.GET("/:id/ratings", handler.GetCounselorRatingList)
+				counselor.GET("/:id/stats", handler.GetCounselorStats)
+			}
+
+			counseling.POST("/counselor/recommend", handler.RecommendCounselors)
+
+			appointment := counseling.Group("/appointment")
+			{
+				appointment.GET("", handler.GetAppointmentList)
+				appointment.GET("/:id", handler.GetAppointmentDetail)
+				appointment.POST("", handler.CreateAppointment)
+				appointment.PUT("/:id", handler.UpdateAppointment)
+				appointment.POST("/:id/cancel", handler.CancelAppointment)
+			}
+
+			counseling.POST("/rating", handler.CreateRating)
+
+			schedule := counseling.Group("/schedule")
+			{
+				schedule.GET("", handler.GetScheduleList)
+				schedule.POST("", handler.CreateSchedule)
+				schedule.DELETE("/:id", handler.DeleteSchedule)
+			}
+		}
+
 		transferTemplate := userAuth.Group("/transfer-template", middleware.AdminRequiredMiddleware())
 		{
 			transferTemplate.GET("", handler.GetTransferTemplateList)

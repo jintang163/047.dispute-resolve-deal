@@ -28,6 +28,8 @@ import ImprovementList from './pages/Satisfaction/ImprovementList';
 import CaseLibraryList from './pages/CaseLibrary/List';
 import CaseLibraryDetail from './pages/CaseLibrary/Detail';
 import CaseLibraryCreate from './pages/CaseLibrary/Create';
+import CounselorList from './pages/Counseling/CounselorList';
+import AppointmentList from './pages/Counseling/AppointmentList';
 import { getToken } from './utils/auth';
 import { useUserStore } from './stores/user';
 
@@ -125,6 +127,10 @@ const App: React.FC = () => {
             <Route index element={<CaseLibraryList />} />
             <Route path="create" element={<CaseLibraryCreate />} />
             <Route path=":id" element={<CaseLibraryDetail />} />
+          </Route>
+          <Route path="counseling">
+            <Route path="counselor" element={<CounselorList />} />
+            <Route path="appointment" element={<AppointmentList />} />
           </Route>
         </Route>
         <Route path="*" element={<Navigate to="/dashboard" replace />} />
