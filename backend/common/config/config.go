@@ -232,4 +232,6 @@ type AliyunVoiceConfig struct {
 	AsrVocabID      string `mapstructure:"asr_vocab_id"`
 	CallbackURL     string `mapstructure:"callback_url"`
 	Endpoint        string `mapstructure:"endpoint"`
+	NlsEndpoint     string `mapstructure:"nls_endpoint"`
+	NlsAppKey       string `mapstructure:"nls_app_key"`
 }

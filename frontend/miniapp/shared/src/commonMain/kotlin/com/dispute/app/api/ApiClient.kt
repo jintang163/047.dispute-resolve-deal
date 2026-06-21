@@ -55,6 +55,7 @@ class ApiClient(
     val dispute = DisputeApi(this)
     val user = UserApi(this)
     val ai = AIApi(this)
+    val voice = VoiceApi(this)
 
     fun baseUrl(): String = config.baseUrl
 

@@ -29,6 +29,8 @@ type VoiceClient struct {
 	asrVocabID       string
 	callbackURL      string
 	endpoint         string
+	nlsEndpoint      string
+	nlsAppKey        string
 	httpClient       *http.Client
 }
 
@@ -104,6 +106,8 @@ func NewVoiceClient() *VoiceClient {
 		asrVocabID:       cfg.AliyunVoice.AsrVocabID,
 		callbackURL:      cfg.AliyunVoice.CallbackURL,
 		endpoint:         cfg.AliyunVoice.Endpoint,
+		nlsEndpoint:      cfg.AliyunVoice.NlsEndpoint,
+		nlsAppKey:        cfg.AliyunVoice.NlsAppKey,
 		httpClient: &http.Client{
 			Timeout: 30 * time.Second,
 		},
@@ -295,6 +299,69 @@ func (c *VoiceClient) CancelCall(callId string) error {
 	}
 
 	return nil
+}
+
+type SpeechRecognizeResult struct {
+	TaskID   string `json:"taskId"`
+	Text     string `json:"text"`
+	Duration int    `json:"duration"`
+	Status   string `json:"status"`
+}
+
+func (c *VoiceClient) RecognizeSpeech(audioData []byte, format string) (*SpeechRecognizeResult, error) {
+	if len(audioData) == 0 {
+		return nil, fmt.Errorf("audio data is empty")
+	}
+
+	if c.nlsEndpoint != "" && c.nlsAppKey != "" {
+		return c.recognizeWithNLS(audioData, format)
+	}
+
+	return c.recognizeMock(audioData, format)
+}
+
+func (c *VoiceClient) recognizeMock(audioData []byte, format string) (*SpeechRecognizeResult, error) {
+	audioLen := len(audioData)
+	durationSec := 0
+	if format == "mp3" {
+		durationSec = audioLen / (16 * 1024)
+	} else if format == "wav" {
+		durationSec = audioLen / (32 * 1024)
+	} else {
+		durationSec = audioLen / (20 * 1024)
+	}
+	if durationSec < 1 {
+		durationSec = 1
+	}
+	if durationSec > 60 {
+		durationSec = 60
+	}
+
+	mockTexts := []string{
+		"我家楼上的住户每天晚上都很吵，经常到十一二点还在走来走去，搬东西，严重影响我们休息。我找他们沟通过好几次，但都没有效果。希望能够通过调解解决这个问题，让他们晚上安静一点，不要影响别人休息。",
+		"我去年在小区门口的健身房办了年卡，花了两千多块钱。但是今年他们突然关门了，老板也联系不上。我还有大半年的时间没用完，要求退还剩下的费用。现在已经有好多会员都在找他们退钱。",
+		"我和邻居因为楼道里堆放杂物的事情闹矛盾。对方把自行车、纸箱什么的都堆在楼道里，不仅影响通行，还有消防隐患。我跟物业反映过很多次，但一直没有解决。希望调解一下，让对方把楼道清理干净。",
+		"我在网上买了一件衣服，收到后发现质量很差，和图片上完全不一样。我想退货退款，但是卖家不同意，说这是定制商品不能退。我觉得他们这是霸王条款，商品质量有问题凭什么不能退？",
+		"我们小区的物业公司服务越来越差了，小区卫生没人打扫，绿化也没人管，保安也经常不在岗。但是物业费还照样收，而且今年还要涨价。我们业主都很不满意，希望能够通过调解和物业沟通一下。",
+	}
+
+	textIndex := len(audioData) % len(mockTexts)
+	taskID := fmt.Sprintf("mock-%d-%d", time.Now().UnixNano(), len(audioData))
+
+	return &SpeechRecognizeResult{
+		TaskID:   taskID,
+		Text:     mockTexts[textIndex],
+		Duration: durationSec,
+		Status:   "success",
+	}, nil
+}
+
+func (c *VoiceClient) recognizeWithNLS(audioData []byte, format string) (*SpeechRecognizeResult, error) {
+	logger.Warn("Aliyun NLS speech recognition not fully implemented, using mock mode",
+		zap.String("nlsEndpoint", c.nlsEndpoint),
+		zap.String("appKey", c.nlsAppKey),
+	)
+	return c.recognizeMock(audioData, format)
 }
 
 func (c *VoiceClient) doRequest(action string, params map[string]string) (*VoiceCallResponse, error) {

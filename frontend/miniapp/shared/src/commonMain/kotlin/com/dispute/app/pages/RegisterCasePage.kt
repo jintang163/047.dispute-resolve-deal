@@ -42,6 +42,9 @@ import com.dispute.app.Route
 import com.dispute.app.components.AppCard
 import com.dispute.app.components.InfoCard
 import com.dispute.app.components.TagCard
+import com.dispute.app.audio.AudioRecorder
+import com.dispute.app.audio.isAudioRecordingSupported
+import com.dispute.app.audio.toBase64
 import com.dispute.app.model.Case
 import com.dispute.app.model.DisputeType
 import com.dispute.app.model.Evidence
@@ -439,6 +442,68 @@ private fun DescriptionSection(
     val selected = remember { mutableStateListOf<String>() }
     selected.addAll(expectations)
 
+    val appState = LocalAppState.current
+    val apiClient = LocalApiClient.current
+
+    val isRecording = remember { mutableStateOf(false) }
+    val isRecognizing = remember { mutableStateOf(false) }
+    val audioRecorder = remember { AudioRecorder() }
+    val recordingSupported = remember { isAudioRecordingSupported() }
+
+    fun handleVoiceInput() {
+        if (isRecording.value) {
+            audioRecorder.stopRecording()
+        } else {
+            if (!recordingSupported) {
+                appState.showToast("当前环境不支持语音输入")
+                return
+            }
+
+            audioRecorder.setOnRecordingStart {
+                isRecording.value = true
+            }
+
+            audioRecorder.setOnRecordingStop { audioData, fileName, format ->
+                isRecording.value = false
+                isRecognizing.value = true
+
+                appState.launchWithLoading {
+                    try {
+                        val result = apiClient.voice.recognizeSpeech(
+                            fileName = fileName,
+                            fileBase64 = audioData.toBase64(),
+                            format = format
+                        )
+
+                        if (result.text.isNotBlank()) {
+                            val newText = if (description.isNotBlank()) {
+                                description + "\n" + result.text
+                            } else {
+                                result.text
+                            }
+                            onDescriptionChange(newText)
+                            appState.showToast("语音识别成功，已填入描述")
+                        } else {
+                            appState.showToast("未识别到语音内容")
+                        }
+                    } catch (e: Exception) {
+                        appState.showToast("语音识别失败: ${e.message}")
+                    } finally {
+                        isRecognizing.value = false
+                    }
+                }
+            }
+
+            audioRecorder.setOnError { message ->
+                isRecording.value = false
+                isRecognizing.value = false
+                appState.showToast(message)
+            }
+
+            audioRecorder.startRecording()
+        }
+    }
+
     Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
         AppCard(title = "纠纷情况描述", subtitle = "请详细描述，有助于调解员了解情况") {
             Column {
@@ -463,13 +528,24 @@ private fun DescriptionSection(
                 )
                 Row(
                     modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text(
-                        text = "建议至少20字",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = if (description.length >= 20) Color(0xFF22C55E) else Color(0xFFF59E0B)
-                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            text = "建议至少20字",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = if (description.length >= 20) Color(0xFF22C55E) else Color(0xFFF59E0B)
+                        )
+                        if (recordingSupported) {
+                            Spacer(modifier = Modifier.width(12.dp))
+                            VoiceInputButton(
+                                isRecording = isRecording.value,
+                                isRecognizing = isRecognizing.value,
+                                onClick = { handleVoiceInput() }
+                            )
+                        }
+                    }
                     Text(
                         text = "${description.length}/2000",
                         style = MaterialTheme.typography.labelMedium,
@@ -697,6 +773,57 @@ private fun LabeledTextField(
                 unfocusedBorderColor = Color(0xFFE5E7EB)
             )
         )
+    }
+}
+
+@Composable
+private fun VoiceInputButton(
+    isRecording: Boolean,
+    isRecognizing: Boolean,
+    onClick: () -> Unit
+) {
+    val backgroundColor = when {
+        isRecording -> Color(0xFFEF4444)
+        isRecognizing -> Color(0xFFF59E0B)
+        else -> MaterialTheme.colorScheme.primary
+    }
+
+    val contentColor = Color.White
+
+    Box(
+        modifier = Modifier
+            .size(36.dp)
+            .background(
+                backgroundColor.copy(alpha = 0.1f),
+                RoundedCornerShape(50)
+            )
+            .clickable {
+                if (!isRecognizing) {
+                    onClick()
+                }
+            },
+        contentAlignment = Alignment.Center
+    ) {
+        when {
+            isRecognizing -> {
+                Text(
+                    text = "⏳",
+                    fontSize = 16.sp
+                )
+            }
+            isRecording -> {
+                Text(
+                    text = "🔴",
+                    fontSize = 16.sp
+                )
+            }
+            else -> {
+                Text(
+                    text = "🎤",
+                    fontSize = 16.sp
+                )
+            }
+        }
     }
 }
 

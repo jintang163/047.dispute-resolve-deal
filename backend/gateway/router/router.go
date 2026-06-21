@@ -57,6 +57,7 @@ func RegisterRoutes(h *app.Hertz) {
 		public.GET("/blockchain/verify/:certNo", handler.PublicVerifyEvidence)
 		public.POST("/callback/aliyun-voice", handler.AliyunVoiceCallback)
 		public.POST("/idcard/query", handler.QueryPopulationByIDCard)
+		public.POST("/voice/recognize", handler.VoiceRecognize)
 	}
 
 	userAuth := api.Group("", middleware.JWTAuthMiddleware())

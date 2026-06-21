@@ -126,3 +126,5 @@ aliyun-voice:
   asr_vocab_id: "vocab-123456"
   callback_url: "https://your-domain.com/api/v1/public/callback/aliyun-voice"
   endpoint: "dyvmsapi.aliyuncs.com"
+  nls_endpoint: "nls-filetrans.cn-hangzhou.aliyuncs.com"
+  nls_app_key: "your-nls-app-key"
