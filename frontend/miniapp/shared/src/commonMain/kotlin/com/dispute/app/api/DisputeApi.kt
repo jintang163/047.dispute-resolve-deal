@@ -4,6 +4,7 @@ import com.dispute.app.model.Case
 import com.dispute.app.model.DisputeType
 import com.dispute.app.model.Evidence
 import com.dispute.app.model.MediationProgress
+import com.dispute.app.model.DisputeProgressResult
 import kotlinx.serialization.Serializable
 
 class DisputeApi(private val client: ApiClient) {
@@ -76,6 +77,16 @@ class DisputeApi(private val client: ApiClient) {
     suspend fun getReceiptQRCode(caseNumber: String, phone: String = ""): ReceiptQRCodeResult {
         val request = mapOf("caseNo" to caseNumber, "phone" to phone)
         val response: ApiResponse<ReceiptQRCodeResult> = client.post("/api/v1/public/receipt/qrcode", request)
+        return response.getOrThrow()
+    }
+
+    suspend fun queryDisputeProgress(caseNumber: String, phone: String = ""): DisputeProgressResult {
+        val params = buildMap {
+            put("caseNo", caseNumber)
+            if (phone.isNotBlank()) put("phone", phone)
+        }
+        val response: ApiResponse<DisputeProgressResult> =
+            client.get("/api/v1/public/dispute/progress", params)
         return response.getOrThrow()
     }
 }
