@@ -357,6 +357,13 @@ func RegisterRoutes(h *app.Hertz) {
 				legalAidApplication.POST("/:id/audit", handler.AuditLegalAidApply)
 			}
 
+			legalAidMaterial := legalAid.Group("/material")
+			{
+				legalAidMaterial.GET("", handler.GetLegalAidMaterialList)
+				legalAidMaterial.POST("/upload", handler.UploadLegalAidMaterial)
+				legalAidMaterial.DELETE("/:id", handler.DeleteLegalAidMaterial)
+			}
+
 			legalAidTransfer := legalAid.Group("/transfer")
 			{
 				legalAidTransfer.GET("", handler.GetLegalAidTransferList)

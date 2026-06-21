@@ -78,6 +78,10 @@ type LegalAidApplication struct {
 	SubmitterID      int64      `json:"submitterId"`
 	SubmitterName    string     `gorm:"size:64" json:"submitterName"`
 	SubmitTime       time.Time  `gorm:"autoCreateTime;index" json:"submitTime"`
+	TransferID       int64      `gorm:"index" json:"transferId"`
+	TransferNo       string     `gorm:"size:64" json:"transferNo"`
+	Transferred      int32      `gorm:"default:0" json:"transferred"`
+	TransferredAt    *time.Time `json:"transferredAt"`
 }
 
 func (LegalAidApplication) TableName() string {
@@ -166,4 +170,25 @@ type LegalAidConsultMessage struct {
 
 func (LegalAidConsultMessage) TableName() string {
 	return "legal_aid_consult_message"
+}
+
+type LegalAidMaterial struct {
+	BaseModel
+	CaseID         int64  `gorm:"index" json:"caseId"`
+	ApplicationID  string `gorm:"size:64;index" json:"applicationId"`
+	MaterialType   int    `gorm:"default:1" json:"materialType"`
+	MaterialName   string `gorm:"size:64" json:"materialName"`
+	FileName       string `gorm:"size:256" json:"fileName"`
+	FilePath       string `gorm:"size:512" json:"filePath"`
+	FileURL        string `gorm:"size:512" json:"fileUrl"`
+	FileSize       int64  `json:"fileSize"`
+	FileExt        string `gorm:"size:16" json:"fileExt"`
+	MimeType       string `gorm:"size:128" json:"mimeType"`
+	UploaderID     int64  `json:"uploaderId"`
+	UploaderName   string `gorm:"size:64" json:"uploaderName"`
+	OrganizationID int64  `json:"organizationId"`
+}
+
+func (LegalAidMaterial) TableName() string {
+	return "legal_aid_material"
 }

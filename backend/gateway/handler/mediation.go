@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
@@ -151,9 +152,64 @@ func CreateMediationRecord(ctx context.Context, c *app.RequestContext) {
 		mq.SendMessage(constants.MQTopicAIProcess, msg)
 	}()
 
-	c.JSON(http.StatusOK, response.SuccessWithMessage(map[string]interface{}{
+	responseData := map[string]interface{}{
 		"id": recordID,
-	}, "调解记录创建成功"))
+	}
+
+	if req.Result == constants.MediationResultFail {
+		var caseLocation struct {
+			Longitude float64 `gorm:"column:longitude"`
+			Latitude  float64 `gorm:"column:latitude"`
+			TypeName  string  `gorm:"column:type_name"`
+		}
+		database.GetDB().Table("dispute_case").
+			Select("longitude, latitude, type_name").
+			Where("id = ?", caseID).
+			First(&caseLocation)
+
+		if caseLocation.Longitude != 0 && caseLocation.Latitude != 0 {
+			distanceExpr := fmt.Sprintf(
+				"(6371 * acos(cos(radians(%f)) * cos(radians(lao.latitude)) * cos(radians(lao.longitude) - radians(%f)) + sin(radians(%f)) * sin(radians(lao.latitude))))",
+				caseLocation.Latitude, caseLocation.Longitude, caseLocation.Latitude)
+
+			var recommendOrgs []map[string]interface{}
+			database.GetDB().Table("legal_aid_org lao").
+				Select("lao.id, lao.org_code, lao.org_name, lao.org_type, lao.level, lao.address, "+
+					"lao.contact_person, lao.contact_phone, lao.lawyer_count, lao.case_capacity, "+
+					distanceExpr+" AS distance").
+				Where("lao.deleted_at IS NULL AND lao.status = 1").
+				Order("distance ASC, lao.case_capacity DESC").
+				Limit(5).
+				Find(&recommendOrgs)
+
+			for _, org := range recommendOrgs {
+				if d, ok := org["distance"]; ok {
+					if dist, ok := d.(float64); ok {
+						org["distance"] = math.Round(dist*100) / 100
+					}
+				}
+			}
+
+			responseData["legalAidRecommend"] = map[string]interface{}{
+				"recommendOrgs": recommendOrgs,
+				"tip":           "调解未达成协议，系统已为您推荐就近的法律援助机构，可一键转介申请法律援助。",
+			}
+
+			history := map[string]interface{}{
+				"case_id":          caseID,
+				"case_no":          caseData.CaseNo,
+				"operation_type":   "LEGAL_AID_RECOMMEND",
+				"operation_detail": fmt.Sprintf("调解失败，系统自动推荐%d家就近法律援助机构", len(recommendOrgs)),
+				"operator_id":      0,
+				"operator_name":    "系统自动",
+				"old_status":       caseData.Status,
+				"new_status":       caseData.Status,
+			}
+			database.GetDB().Table("dispute_case_history").Create(history)
+		}
+	}
+
+	c.JSON(http.StatusOK, response.SuccessWithMessage(responseData, "调解记录创建成功"))
 }
 
 func GetMediationRecords(ctx context.Context, c *app.RequestContext) {

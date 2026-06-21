@@ -1,14 +1,19 @@
 package handler
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"math"
 	"net/http"
+	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
+	"github.com/dispute-resolve/common/config"
 	"github.com/dispute-resolve/common/constants"
 	"github.com/dispute-resolve/common/database"
 	"github.com/dispute-resolve/common/logger"
@@ -18,6 +23,7 @@ import (
 	"github.com/dispute-resolve/gateway/middleware"
 
 	"github.com/cloudwego/hertz/pkg/app"
+	"github.com/minio/minio-go/v7"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
@@ -82,6 +88,7 @@ type LegalAidApplyRequest struct {
 	MonthlyIncome    float64  `json:"monthlyIncome"`
 	AidReason        string   `json:"aidReason"`
 	EvidenceSummary  string   `json:"evidenceSummary"`
+	MaterialIDs      []int64  `json:"materialIds"`
 	MaterialURLs     []string `json:"materialUrls"`
 }
 
@@ -102,6 +109,7 @@ type LegalAidAuditRequest struct {
 
 type LegalAidTransferRequest struct {
 	CaseID         int64   `json:"caseId" binding:"required"`
+	ApplicationID  int64   `json:"applicationId"`
 	ToOrgID        int64   `json:"toOrgId" binding:"required"`
 	ToLawyerID     int64   `json:"toLawyerId"`
 	TransferReason string  `json:"transferReason"`
@@ -395,6 +403,236 @@ func GetLegalAidLawyerDetail(ctx context.Context, c *app.RequestContext) {
 	c.JSON(http.StatusOK, response.Success(lawyer))
 }
 
+func UploadLegalAidMaterial(ctx context.Context, c *app.RequestContext) {
+	userInfo := middleware.GetUserInfo(c)
+
+	caseID, _ := strconv.ParseInt(c.Query("caseId"), 10, 64)
+	materialType, _ := strconv.Atoi(c.Query("materialType"))
+	if materialType == 0 {
+		materialType = 1
+	}
+
+	file, err := c.FormFile("file")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, response.BadRequest("请选择要上传的文件"))
+		return
+	}
+
+	const maxFileSize = 50 * 1024 * 1024
+	if file.Size > maxFileSize {
+		c.JSON(http.StatusBadRequest, response.BadRequest("文件大小不能超过50MB"))
+		return
+	}
+
+	ext := strings.ToLower(filepath.Ext(file.Filename))
+	allowedExts := map[string]bool{
+		".jpg": true, ".jpeg": true, ".png": true, ".gif": true, ".bmp": true,
+		".pdf": true, ".doc": true, ".docx": true, ".xls": true, ".xlsx": true, ".txt": true,
+	}
+
+	if !allowedExts[ext] {
+		c.JSON(http.StatusBadRequest, response.BadRequest("不支持的文件格式，仅支持图片和文档"))
+		return
+	}
+
+	src, err := file.Open()
+	if err != nil {
+		logger.Error("Open file failed", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, response.ServerError("文件读取失败"))
+		return
+	}
+	defer src.Close()
+
+	fileContent, err := io.ReadAll(src)
+	if err != nil {
+		logger.Error("Read file failed", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, response.ServerError("文件读取失败"))
+		return
+	}
+
+	minioClient := database.GetMinioClient()
+	if minioClient == nil {
+		c.JSON(http.StatusInternalServerError, response.ServerError("文件存储服务未初始化"))
+		return
+	}
+
+	cfg := config.GetConfig()
+	if cfg == nil || cfg.MinIO.Bucket == "" {
+		c.JSON(http.StatusInternalServerError, response.ServerError("存储配置错误"))
+		return
+	}
+
+	objectName := fmt.Sprintf("%s/%d/%s%s",
+		constants.MinIOPathLegalAid,
+		userInfo.OrganizationID,
+		utils.GenerateUUID(),
+		ext,
+	)
+
+	_, err = minioClient.PutObject(ctx, cfg.MinIO.Bucket, objectName,
+		bytes.NewReader(fileContent), int64(len(fileContent)),
+		minio.PutObjectOptions{
+			ContentType: file.Header.Get("Content-Type"),
+		})
+	if err != nil {
+		logger.Error("Upload file to MinIO failed", zap.Error(err), zap.String("objectName", objectName))
+		c.JSON(http.StatusInternalServerError, response.ServerError("文件上传失败"))
+		return
+	}
+
+	materialTypeMap := map[int]string{
+		1: "低保证明",
+		2: "收入证明",
+		3: "身份证",
+		4: "户口本",
+		5: "残疾证明",
+		6: "病例材料",
+		7: "其他证明",
+	}
+
+	fileURL := fmt.Sprintf("/api/v1/public/file/%s", objectName)
+
+	materialID := utils.GenerateID()
+
+	materialRecord := map[string]interface{}{
+		"id":              materialID,
+		"case_id":         caseID,
+		"material_type":   materialType,
+		"material_name":   materialTypeMap[materialType],
+		"file_name":       file.Filename,
+		"file_path":       objectName,
+		"file_url":        fileURL,
+		"file_size":       file.Size,
+		"file_ext":        ext,
+		"mime_type":       file.Header.Get("Content-Type"),
+		"uploader_id":     userInfo.UserID,
+		"uploader_name":   userInfo.RealName,
+		"organization_id": userInfo.OrganizationID,
+	}
+
+	tx := database.GetDB().Begin()
+	if err := tx.Table("legal_aid_material").Create(materialRecord).Error; err != nil {
+		tx.Rollback()
+		logger.Error("Save material record failed", zap.Error(err))
+		c.JSON(http.StatusInternalServerError, response.ServerError("材料保存失败"))
+		return
+	}
+
+	var caseNo string
+	if caseID > 0 {
+		tx.Table("dispute_case").
+			Select("case_no").
+			Where("id = ?", caseID).
+			Scan(&caseNo)
+
+		history := map[string]interface{}{
+			"case_id":          caseID,
+			"case_no":          caseNo,
+			"operation_type":   "LEGAL_AID_MATERIAL_UPLOAD",
+			"operation_detail": fmt.Sprintf("上传法援证明材料: %s", file.Filename),
+			"operator_id":      userInfo.UserID,
+			"operator_name":    userInfo.RealName,
+		}
+		tx.Table("dispute_case_history").Create(history)
+	}
+
+	tx.Commit()
+
+	materialTypeName := materialTypeMap[materialType]
+
+	c.JSON(http.StatusOK, response.SuccessWithMessage(map[string]interface{}{
+		"id":               materialID,
+		"fileUrl":          fileURL,
+		"fileName":         file.Filename,
+		"fileSize":         file.Size,
+		"materialType":     materialType,
+		"materialTypeName": materialTypeName,
+		"uploadTime":       time.Now(),
+	}, fmt.Sprintf("%s上传成功", materialTypeName)))
+}
+
+func GetLegalAidMaterialList(ctx context.Context, c *app.RequestContext) {
+	caseID, _ := strconv.ParseInt(c.Query("caseId"), 10, 64)
+
+	var list []map[string]interface{}
+	query := database.GetDB().Table("legal_aid_material").
+		Where("deleted_at IS NULL")
+
+	if caseID > 0 {
+		query = query.Where("case_id = ?", caseID)
+	}
+
+	query.Order("created_at DESC").Find(&list)
+
+	for _, item := range list {
+		if size, ok := item["file_size"].(int64); ok {
+			item["file_size_format"] = formatFileSize(size)
+		}
+	}
+
+	c.JSON(http.StatusOK, response.Success(list))
+}
+
+func DeleteLegalAidMaterial(ctx context.Context, c *app.RequestContext) {
+	id, _ := strconv.ParseInt(c.Param("id"), 10, 64)
+	if id <= 0 {
+		c.JSON(http.StatusBadRequest, response.BadRequest("无效的材料ID"))
+		return
+	}
+
+	userInfo := middleware.GetUserInfo(c)
+
+	var material struct {
+		FilePath   string `gorm:"column:file_path"`
+		CaseID     int64  `gorm:"column:case_id"`
+		UploaderID int64  `gorm:"column:uploader_id"`
+	}
+	if err := database.GetDB().Table("legal_aid_material").
+		Select("file_path, case_id, uploader_id").
+		Where("id = ?", id).First(&material).Error; err != nil {
+		c.JSON(http.StatusNotFound, response.NotFound("材料不存在"))
+		return
+	}
+
+	if material.UploaderID != userInfo.UserID && userInfo.Role > constants.RoleLeader {
+		c.JSON(http.StatusForbidden, response.Forbidden("只能删除自己上传的材料"))
+		return
+	}
+
+	tx := database.GetDB().Begin()
+	tx.Delete(&model.LegalAidMaterial{}, id)
+
+	if material.CaseID > 0 {
+		var caseNo string
+		tx.Table("dispute_case").
+			Select("case_no").
+			Where("id = ?", material.CaseID).
+			Scan(&caseNo)
+
+		history := map[string]interface{}{
+			"case_id":          material.CaseID,
+			"case_no":          caseNo,
+			"operation_type":   "LEGAL_AID_MATERIAL_DELETE",
+			"operation_detail": "删除法援证明材料",
+			"operator_id":      userInfo.UserID,
+			"operator_name":    userInfo.RealName,
+		}
+		tx.Table("dispute_case_history").Create(history)
+	}
+
+	tx.Commit()
+
+	minioClient := database.GetMinioClient()
+	cfg := config.GetConfig()
+	if minioClient != nil && cfg != nil && material.FilePath != "" {
+		go func() {
+			_ = minioClient.RemoveObject(ctx, cfg.MinIO.Bucket, material.FilePath, minio.RemoveObjectOptions{})
+		}()
+	}
+
+	c.JSON(http.StatusOK, response.SuccessWithMessage(nil, "材料删除成功"))
+}
+
 func ApplyLegalAid(ctx context.Context, c *app.RequestContext) {
 	var req LegalAidApplyRequest
 	if err := c.BindAndValidate(&req); err != nil {
@@ -410,12 +648,75 @@ func ApplyLegalAid(ctx context.Context, c *app.RequestContext) {
 		return
 	}
 
+	var pendingCount int64
+	database.GetDB().Model(&model.LegalAidApplication{}).
+		Where("case_id = ? AND status IN (?)", req.CaseID,
+			[]int32{constants.LegalAidApplyStatusPending, constants.LegalAidApplyStatusApproved}).
+		Count(&pendingCount)
+	if pendingCount > 0 {
+		c.JSON(http.StatusBadRequest, response.BadRequest("该案件已有待审核或已通过的法援申请，请勿重复提交"))
+		return
+	}
+
 	applyNo := fmt.Sprintf("LA%s%s", time.Now().Format("20060102"), utils.GenerateIDStr())
 
 	materialURLs := ""
-	if len(req.MaterialURLs) > 0 {
+	materialCount := 0
+
+	if len(req.MaterialIDs) > 0 {
+		var materials []model.LegalAidMaterial
+		database.GetDB().Where("id IN ? AND case_id = ?", req.MaterialIDs, req.CaseID).
+			Find(&materials)
+
+		if len(materials) > 0 {
+			urls := make([]string, 0, len(materials))
+			materialInfo := make([]map[string]interface{}, 0, len(materials))
+			for _, m := range materials {
+				urls = append(urls, m.FileURL)
+				materialInfo = append(materialInfo, map[string]interface{}{
+					"id":               m.ID,
+					"materialType":     m.MaterialType,
+					"materialTypeName": m.MaterialName,
+					"fileName":         m.FileName,
+					"fileUrl":          m.FileURL,
+					"fileSize":         m.FileSize,
+				})
+			}
+			materialJSON, _ := json.Marshal(urls)
+			materialURLs = string(materialJSON)
+			materialCount = len(materials)
+
+			tx := database.GetDB().Begin()
+			for _, m := range materials {
+				tx.Model(&model.LegalAidMaterial{}).Where("id = ?", m.ID).
+					Update("application_id", applyNo)
+			}
+			tx.Commit()
+		}
+	} else if len(req.MaterialURLs) > 0 {
 		materialJSON, _ := json.Marshal(req.MaterialURLs)
 		materialURLs = string(materialJSON)
+		materialCount = len(req.MaterialURLs)
+	}
+
+	if materialCount == 0 {
+		c.JSON(http.StatusBadRequest, response.BadRequest("请上传至少一份证明材料"))
+		return
+	}
+
+	if req.IncomeLevel == constants.LegalAidIncomeLevelLowIncome {
+		hasLowIncomeProof := false
+		if len(req.MaterialIDs) > 0 {
+			var count int64
+			database.GetDB().Model(&model.LegalAidMaterial{}).
+				Where("id IN ? AND material_type = ?", req.MaterialIDs, 1).
+				Count(&count)
+			hasLowIncomeProof = count > 0
+		}
+		if !hasLowIncomeProof {
+			c.JSON(http.StatusBadRequest, response.BadRequest("低保收入家庭请上传低保证明材料"))
+			return
+		}
 	}
 
 	application := &model.LegalAidApplication{
@@ -438,13 +739,32 @@ func ApplyLegalAid(ctx context.Context, c *app.RequestContext) {
 		SubmitterName:    userInfo.RealName,
 	}
 
-	if err := database.GetDB().Create(application).Error; err != nil {
+	tx := database.GetDB().Begin()
+	if err := tx.Create(application).Error; err != nil {
+		tx.Rollback()
 		logger.Error("提交法援申请失败", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, response.Error("提交失败"))
 		return
 	}
 
-	c.JSON(http.StatusOK, response.Success(application))
+	history := map[string]interface{}{
+		"case_id":          req.CaseID,
+		"case_no":          disputeCase.CaseNo,
+		"operation_type":   "LEGAL_AID_APPLY",
+		"operation_detail": fmt.Sprintf("提交法律援助申请，申请编号: %s，附证明材料%d份", applyNo, materialCount),
+		"operator_id":      userInfo.UserID,
+		"operator_name":    userInfo.RealName,
+	}
+	tx.Table("dispute_case_history").Create(history)
+	tx.Commit()
+
+	c.JSON(http.StatusOK, response.SuccessWithMessage(map[string]interface{}{
+		"id":            application.ID,
+		"applyNo":       application.ApplyNo,
+		"status":        application.Status,
+		"materialCount": materialCount,
+		"tip":           "申请已提交，等待审核。审核通过后可转介至法律援助机构。",
+	}, "法援申请提交成功"))
 }
 
 func GetLegalAidApplyList(ctx context.Context, c *app.RequestContext) {
@@ -606,9 +926,47 @@ func CreateLegalAidTransfer(ctx context.Context, c *app.RequestContext) {
 		return
 	}
 
+	var application model.LegalAidApplication
+	if req.ApplicationID > 0 {
+		if err := database.GetDB().Where("id = ?", req.ApplicationID).First(&application).Error; err != nil {
+			c.JSON(http.StatusBadRequest, response.BadRequest("法援申请不存在"))
+			return
+		}
+		if application.CaseID != req.CaseID {
+			c.JSON(http.StatusBadRequest, response.BadRequest("法援申请与案件不匹配"))
+			return
+		}
+	} else {
+		if err := database.GetDB().Where("case_id = ? AND status = ?",
+			req.CaseID, constants.LegalAidApplyStatusApproved).
+			Order("audit_time DESC").First(&application).Error; err != nil {
+			c.JSON(http.StatusBadRequest,
+				response.BadRequest("该案件尚未通过法律援助资质审核，请先提交申请并等待审核通过"))
+			return
+		}
+		req.ApplicationID = application.ID
+	}
+
+	if application.Status != constants.LegalAidApplyStatusApproved {
+		statusName := constants.LegalAidApplyStatusMap[int(application.Status)]
+		c.JSON(http.StatusBadRequest,
+			response.BadRequest(fmt.Sprintf("法援申请当前状态为：%s，审核通过后方可转介", statusName)))
+		return
+	}
+
 	var toOrg model.LegalAidOrg
 	if err := database.GetDB().Where("id = ?", req.ToOrgID).First(&toOrg).Error; err != nil {
 		c.JSON(http.StatusBadRequest, response.BadRequest("法援机构不存在"))
+		return
+	}
+
+	var pendingTransferCount int64
+	database.GetDB().Model(&model.LegalAidTransfer{}).
+		Where("case_id = ? AND accept_status IN (?)", req.CaseID,
+			[]int32{constants.LegalAidTransferStatusPending, constants.LegalAidTransferStatusAccepted}).
+		Count(&pendingTransferCount)
+	if pendingTransferCount > 0 {
+		c.JSON(http.StatusBadRequest, response.BadRequest("该案件已有待处理或已受理的转介记录"))
 		return
 	}
 
@@ -632,6 +990,18 @@ func CreateLegalAidTransfer(ctx context.Context, c *app.RequestContext) {
 		}
 	}
 
+	transferReason := req.TransferReason
+	if transferReason == "" {
+		transferReason = fmt.Sprintf("调解失败，经资质审核通过，转介至%s申请法律援助。申请人: %s，申请编号: %s",
+			toOrg.OrgName, application.ApplicantName, application.ApplyNo)
+	}
+
+	caseSummary := req.CaseSummary
+	if caseSummary == "" {
+		caseSummary = fmt.Sprintf("纠纷类型: %s\n申请理由: %s\n证据情况: %s",
+			application.DisputeType, application.AidReason, application.EvidenceSummary)
+	}
+
 	transfer := &model.LegalAidTransfer{
 		TransferNo:     transferNo,
 		CaseID:         req.CaseID,
@@ -646,8 +1016,8 @@ func CreateLegalAidTransfer(ctx context.Context, c *app.RequestContext) {
 		ToOrgName:      toOrg.OrgName,
 		ToLawyerID:     req.ToLawyerID,
 		ToLawyerName:   lawyerName,
-		TransferReason: req.TransferReason,
-		CaseSummary:    req.CaseSummary,
+		TransferReason: transferReason,
+		CaseSummary:    caseSummary,
 		AttachIDs:      attachIDs,
 		AcceptStatus:   constants.LegalAidTransferStatusPending,
 	}
@@ -662,9 +1032,34 @@ func CreateLegalAidTransfer(ctx context.Context, c *app.RequestContext) {
 
 	tx.Model(&model.LegalAidOrg{}).Where("id = ?", req.ToOrgID).UpdateColumn("accept_count", gorm.Expr("accept_count + 1"))
 
+	tx.Model(&model.LegalAidApplication{}).Where("id = ?", req.ApplicationID).Updates(map[string]interface{}{
+		"transfer_id":  transfer.ID,
+		"transfer_no":  transferNo,
+		"transferred":  1,
+		"transferred_at": time.Now(),
+	})
+
+	history := map[string]interface{}{
+		"case_id":          req.CaseID,
+		"case_no":          disputeCase.CaseNo,
+		"operation_type":   "LEGAL_AID_TRANSFER",
+		"operation_detail": fmt.Sprintf("转介至%s，转介编号: %s，法援申请: %s",
+			toOrg.OrgName, transferNo, application.ApplyNo),
+		"operator_id":      userInfo.UserID,
+		"operator_name":    userInfo.RealName,
+	}
+	tx.Table("dispute_case_history").Create(history)
+
 	tx.Commit()
 
-	c.JSON(http.StatusOK, response.Success(transfer))
+	c.JSON(http.StatusOK, response.SuccessWithMessage(map[string]interface{}{
+		"id":            transfer.ID,
+		"transferNo":    transfer.TransferNo,
+		"acceptStatus":  transfer.AcceptStatus,
+		"applicationId": req.ApplicationID,
+		"applyNo":       application.ApplyNo,
+		"tip":           fmt.Sprintf("已成功转介至%s，待机构受理后可开启免费咨询。", toOrg.OrgName),
+	}, "转介成功"))
 }
 
 func GetLegalAidTransferList(ctx context.Context, c *app.RequestContext) {
@@ -805,6 +1200,22 @@ func CreateLegalAidConsult(ctx context.Context, c *app.RequestContext) {
 
 	userInfo := middleware.GetUserInfo(c)
 
+	if req.TransferID > 0 {
+		var transfer model.LegalAidTransfer
+		if err := database.GetDB().Where("id = ?", req.TransferID).First(&transfer).Error; err != nil {
+			c.JSON(http.StatusBadRequest, response.BadRequest("转介记录不存在"))
+			return
+		}
+		if transfer.AcceptStatus != constants.LegalAidTransferStatusAccepted {
+			c.JSON(http.StatusBadRequest, response.BadRequest("转介尚未受理，暂无法开启咨询"))
+			return
+		}
+		if transfer.ToLawyerID > 0 && req.LawyerID != transfer.ToLawyerID {
+			c.JSON(http.StatusBadRequest, response.BadRequest("该转介已分配指定律师，请选择正确的律师"))
+			return
+		}
+	}
+
 	var lawyer model.LegalAidLawyer
 	if err := database.GetDB().Where("id = ?", req.LawyerID).First(&lawyer).Error; err != nil {
 		c.JSON(http.StatusBadRequest, response.BadRequest("律师不存在"))
@@ -908,6 +1319,34 @@ func StartLegalAidConsult(ctx context.Context, c *app.RequestContext) {
 		return
 	}
 
+	var consult model.LegalAidConsult
+	if err := database.GetDB().Where("id = ?", id).First(&consult).Error; err != nil {
+		c.JSON(http.StatusNotFound, response.NotFound("咨询不存在"))
+		return
+	}
+
+	if consult.TransferID > 0 {
+		var transfer model.LegalAidTransfer
+		if err := database.GetDB().Where("id = ?", consult.TransferID).First(&transfer).Error; err != nil {
+			c.JSON(http.StatusBadRequest, response.BadRequest("关联的转介记录不存在"))
+			return
+		}
+		if transfer.AcceptStatus != constants.LegalAidTransferStatusAccepted {
+			c.JSON(http.StatusBadRequest, response.BadRequest("转介尚未受理，暂无法开启咨询"))
+			return
+		}
+	}
+
+	if consult.ConsultStatus == constants.LegalAidConsultStatusOngoing {
+		c.JSON(http.StatusBadRequest, response.BadRequest("咨询已在进行中"))
+		return
+	}
+
+	if consult.ConsultStatus == constants.LegalAidConsultStatusCompleted {
+		c.JSON(http.StatusBadRequest, response.BadRequest("咨询已结束，无法重新开始"))
+		return
+	}
+
 	now := time.Now()
 
 	updates := map[string]interface{}{
@@ -921,7 +1360,11 @@ func StartLegalAidConsult(ctx context.Context, c *app.RequestContext) {
 		return
 	}
 
-	c.JSON(http.StatusOK, response.Success(nil))
+	c.JSON(http.StatusOK, response.Success(map[string]interface{}{
+		"freeDuration": consult.FreeDuration,
+		"startTime":    now,
+		"tip":          fmt.Sprintf("您享有%d分钟免费咨询时长，请在规定时间内完成咨询。", consult.FreeDuration/60),
+	}))
 }
 
 func EndLegalAidConsult(ctx context.Context, c *app.RequestContext) {
@@ -990,8 +1433,50 @@ func SendLegalAidConsultMessage(ctx context.Context, c *app.RequestContext) {
 		return
 	}
 
+	if consult.ConsultStatus != constants.LegalAidConsultStatusOngoing {
+		c.JSON(http.StatusBadRequest, response.BadRequest("咨询未开始或已结束，无法发送消息"))
+		return
+	}
+
+	now := time.Now()
+	currentDuration := 0
+	isTimedOut := false
+	remainingTime := 0
+
+	if consult.StartTime != nil {
+		currentDuration = int(now.Sub(*consult.StartTime).Seconds())
+		remainingTime = consult.FreeDuration - currentDuration
+
+		if currentDuration >= consult.FreeDuration {
+			isTimedOut = true
+		}
+	}
+
+	if isTimedOut {
+		updates := map[string]interface{}{
+			"consult_status": constants.LegalAidConsultStatusTimeout,
+			"end_time":       now,
+			"total_duration": currentDuration,
+			"used_duration":  consult.FreeDuration,
+		}
+		database.GetDB().Model(&model.LegalAidConsult{}).Where("id = ?", req.ConsultID).Updates(updates)
+
+		c.JSON(http.StatusBadRequest, response.BadRequest(
+			fmt.Sprintf("免费咨询时长%d分钟已用尽，请后续通过其他方式咨询。", consult.FreeDuration/60)))
+		return
+	}
+
+	updates := map[string]interface{}{
+		"used_duration": currentDuration,
+	}
+	database.GetDB().Model(&model.LegalAidConsult{}).Where("id = ?", req.ConsultID).Updates(updates)
+
 	senderType := constants.LegalAidSenderTypeUser
 	senderName := userInfo.RealName
+
+	if userInfo.UserID == consult.LawyerID {
+		senderType = constants.LegalAidSenderTypeLawyer
+	}
 
 	message := &model.LegalAidConsultMessage{
 		ConsultID:   req.ConsultID,
@@ -1012,7 +1497,18 @@ func SendLegalAidConsultMessage(ctx context.Context, c *app.RequestContext) {
 		return
 	}
 
-	c.JSON(http.StatusOK, response.Success(message))
+	responseData := map[string]interface{}{
+		"message":       message,
+		"usedDuration":  currentDuration,
+		"remainingTime": remainingTime,
+		"freeDuration":  consult.FreeDuration,
+	}
+
+	if remainingTime < 300 {
+		responseData["warning"] = fmt.Sprintf("温馨提示：您的免费咨询时长还剩%d分钟，请抓紧时间。", remainingTime/60)
+	}
+
+	c.JSON(http.StatusOK, response.Success(responseData))
 }
 
 func GetLegalAidConsultMessages(ctx context.Context, c *app.RequestContext) {
