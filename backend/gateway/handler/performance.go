@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"encoding/csv"
+	"encoding/json"
 	"fmt"
 	"math"
 	"net/http"
@@ -14,6 +15,7 @@ import (
 	"github.com/dispute-resolve/common/constants"
 	"github.com/dispute-resolve/common/database"
 	"github.com/dispute-resolve/common/logger"
+	"github.com/dispute-resolve/common/mq"
 	"github.com/dispute-resolve/common/response"
 	"github.com/dispute-resolve/common/utils"
 	"github.com/dispute-resolve/gateway/middleware"
@@ -522,6 +524,11 @@ func GetPerformanceDashboard(ctx context.Context, c *app.RequestContext) {
 	var snapshots []map[string]interface{}
 	db.Order("pms.total_score DESC").Find(&snapshots)
 
+	useRealtime := len(snapshots) == 0
+	if useRealtime {
+		snapshots = aggregatePerformanceFromBusinessTables(year, month, orgID, userInfo)
+	}
+
 	totalCases := 0
 	totalClosed := 0
 	totalSuccess := 0
@@ -597,12 +604,166 @@ func GetPerformanceDashboard(ctx context.Context, c *app.RequestContext) {
 		"avgDays":          avgDays,
 		"avgSatisfaction":  avgSatisfaction,
 		"avgScore":         avgScore,
+		"dataSource":       map[bool]string{true: "realtime", false: "snapshot"}[useRealtime],
 	}
 
 	c.JSON(http.StatusOK, response.Success(map[string]interface{}{
 		"summary":    summary,
 		"mediators":  snapshots,
 	}))
+}
+
+func aggregatePerformanceFromBusinessTables(year, month int, orgID int64, userInfo *middleware.UserClaims) []map[string]interface{} {
+	startDate := time.Date(year, time.Month(month), 1, 0, 0, 0, 0, time.Local)
+	endDate := startDate.AddDate(0, 1, 0)
+
+	var mediatorIDs []int64
+	userDB := database.GetDB().Table("sys_user su").
+		Select("su.id, su.real_name, su.organization_id, so.org_name").
+		Joins("LEFT JOIN sys_organization so ON su.organization_id = so.id").
+		Where("su.role_id = ?", constants.RoleMediator).
+		Where("su.status = 1")
+
+	if orgID > 0 {
+		userDB = userDB.Where("su.organization_id = ?", orgID)
+	}
+	if userInfo.Role == constants.RoleMediator {
+		userDB = userDB.Where("su.id = ?", userInfo.UserID)
+	}
+	var users []map[string]interface{}
+	userDB.Find(&users)
+
+	var indicators []map[string]interface{}
+	database.GetDB().Table("performance_indicator_config").
+		Where("status = 1").
+		Find(&indicators)
+
+	var results []map[string]interface{}
+	for _, user := range users {
+		userID, _ := user["id"].(int64)
+		realName, _ := user["real_name"].(string)
+		organizationID, _ := user["organization_id"].(int64)
+		orgName, _ := user["org_name"].(string)
+
+		var totalCases int64
+		database.GetDB().Table("dispute_case").
+			Where("mediator_id = ?", userID).
+			Where("created_at >= ? AND created_at < ?", startDate, endDate).
+			Where("deleted_at IS NULL").
+			Count(&totalCases)
+
+		var closedCases int64
+		database.GetDB().Table("dispute_case").
+			Where("mediator_id = ?", userID).
+			Where("status = ?", constants.CaseStatusClosed).
+			Where("closed_time >= ? AND closed_time < ?", startDate, endDate).
+			Where("deleted_at IS NULL").
+			Count(&closedCases)
+
+		var successCases int64
+		database.GetDB().Table("dispute_case").
+			Where("mediator_id = ?", userID).
+			Where("status = ?", constants.CaseStatusClosed).
+			Where("mediation_result = ?", constants.MediationResultSuccess).
+			Where("closed_time >= ? AND closed_time < ?", startDate, endDate).
+			Where("deleted_at IS NULL").
+			Count(&successCases)
+
+		var avgDays float64
+		database.GetDB().Table("dispute_case").
+			Where("mediator_id = ?", userID).
+			Where("status = ?", constants.CaseStatusClosed).
+			Where("closed_time >= ? AND closed_time < ?", startDate, endDate).
+			Where("deleted_at IS NULL").
+			Select("AVG(TIMESTAMPDIFF(DAY, created_at, closed_time))").
+			Scan(&avgDays)
+
+		var avgSatisfaction float64
+		database.GetDB().Table("dispute_case").
+			Where("mediator_id = ?", userID).
+			Where("status = ?", constants.CaseStatusClosed).
+			Where("closed_time >= ? AND closed_time < ?", startDate, endDate).
+			Where("deleted_at IS NULL").
+			Where("satisfaction_score > 0").
+			Select("AVG(satisfaction_score)").
+			Scan(&avgSatisfaction)
+
+		var urgeCount int64
+		database.GetDB().Table("workflow_urge").
+			Where("current_handler_id = ?", userID).
+			Where("created_at >= ? AND created_at < ?", startDate, endDate).
+			Count(&urgeCount)
+
+		indicatorScoreMap := make(map[string]float64)
+		totalWeight := 0.0
+		totalScore := 0.0
+
+		for _, ind := range indicators {
+			code, _ := ind["indicator_code"].(string)
+			weight, _ := ind["weight"].(float64)
+			if code == "" {
+				continue
+			}
+			totalWeight += weight
+			score := calculateIndicatorScore(code, totalCases, closedCases, successCases, avgDays, avgSatisfaction, urgeCount)
+			indicatorScoreMap[code] = score
+			totalScore += score * weight
+		}
+
+		if totalWeight > 0 {
+			totalScore = totalScore / totalWeight
+		}
+		totalScore = math.Round(totalScore*100) / 100
+
+		level := "C"
+		if totalScore >= 90 {
+			level = "S"
+		} else if totalScore >= 80 {
+			level = "A"
+		} else if totalScore >= 70 {
+			level = "B"
+		} else if totalScore >= 60 {
+			level = "C"
+		} else {
+			level = "D"
+		}
+
+		closeRate := 0.0
+		if totalCases > 0 {
+			closeRate = math.Round(float64(closedCases)/float64(totalCases)*10000) / 100
+		}
+		successRate := 0.0
+		if closedCases > 0 {
+			successRate = math.Round(float64(successCases)/float64(closedCases)*10000) / 100
+		}
+
+		result := map[string]interface{}{
+			"user_id":          userID,
+			"user_name":        realName,
+			"org_id":           organizationID,
+			"org_name":         orgName,
+			"year":             year,
+			"month":            month,
+			"case_count":       int(totalCases),
+			"closed_count":     int(closedCases),
+			"close_rate":       closeRate,
+			"success_count":    int(successCases),
+			"success_rate":     successRate,
+			"avg_days":         math.Round(avgDays*100) / 100,
+			"avg_satisfaction": math.Round(avgSatisfaction*100) / 100,
+			"urge_count":       int(urgeCount),
+			"total_score":      totalScore,
+			"level":            level,
+		}
+
+		for code, sc := range indicatorScoreMap {
+			result[code+"_score"] = math.Round(sc*100) / 100
+		}
+
+		results = append(results, result)
+	}
+
+	return results
 }
 
 func GetPerformanceMonthComparison(ctx context.Context, c *app.RequestContext) {
@@ -846,6 +1007,7 @@ func UpdatePerformanceIndicatorConfig(ctx context.Context, c *app.RequestContext
 			ID     int64   `json:"id" binding:"required"`
 			Weight float64 `json:"weight" binding:"required"`
 		} `json:"indicators" binding:"required"`
+		AutoRecalculate bool `json:"autoRecalculate"`
 	}
 	if err := c.BindAndValidate(&req); err != nil {
 		c.JSON(http.StatusBadRequest, response.BadRequest(err.Error()))
@@ -874,7 +1036,265 @@ func UpdatePerformanceIndicatorConfig(ctx context.Context, c *app.RequestContext
 	}
 	tx.Commit()
 
-	c.JSON(http.StatusOK, response.SuccessWithMessage(nil, "权重更新成功"))
+	recalculateCount := 0
+	if req.AutoRecalculate {
+		year := time.Now().Year()
+		month := int(time.Now().Month())
+		recalculateCount = batchRecalculateAllMediators(year, month, userInfo)
+	}
+
+	c.JSON(http.StatusOK, response.SuccessWithMessage(map[string]interface{}{
+		"recalculateCount": recalculateCount,
+	}, "权重更新成功"))
+}
+
+func BatchCalculatePerformanceScore(ctx context.Context, c *app.RequestContext) {
+	userInfo := middleware.GetUserInfo(c)
+	if userInfo.Role > constants.RoleLeader {
+		c.JSON(http.StatusForbidden, response.Forbidden("无权限计算考核分数"))
+		return
+	}
+
+	var req struct {
+		Year  int   `json:"year" binding:"required"`
+		Month int   `json:"month" binding:"required"`
+		OrgID int64 `json:"organizationId"`
+	}
+	if err := c.BindAndValidate(&req); err != nil {
+		c.JSON(http.StatusBadRequest, response.BadRequest(err.Error()))
+		return
+	}
+
+	count := batchRecalculateAllMediators(req.Year, req.Month, userInfo)
+
+	c.JSON(http.StatusOK, response.SuccessWithMessage(map[string]interface{}{
+		"count": count,
+	}, fmt.Sprintf("批量计算完成，共计算 %d 名调解员绩效", count)))
+}
+
+func batchRecalculateAllMediators(year, month int, userInfo *middleware.UserClaims) int {
+	orgID := int64(0)
+	if userInfo.Role == constants.RoleLeader {
+		orgID = userInfo.OrganizationID
+	}
+
+	userDB := database.GetDB().Table("sys_user su").
+		Select("su.id, su.real_name, su.organization_id").
+		Where("su.role_id = ?", constants.RoleMediator).
+		Where("su.status = 1")
+
+	if orgID > 0 {
+		userDB = userDB.Where("su.organization_id = ?", orgID)
+	}
+
+	var users []map[string]interface{}
+	userDB.Find(&users)
+
+	count := 0
+	for _, user := range users {
+		userID, _ := user["id"].(int64)
+
+		internalReq := &struct {
+			UserID int64
+			Period int32
+			Year   int32
+			Month  int32
+		}{
+			UserID: userID,
+			Period: constants.PerformancePeriodMonth,
+			Year:   int32(year),
+			Month:  int32(month),
+		}
+
+		calculateSingleMediatorScore(internalReq, userInfo)
+		count++
+	}
+
+	return count
+}
+
+func calculateSingleMediatorScore(req *struct {
+	UserID int64
+	Period int32
+	Year   int32
+	Month  int32
+}, userInfo *middleware.UserClaims) error {
+	var user struct {
+		RealName       string `gorm:"column:real_name"`
+		OrganizationID int64  `gorm:"column:organization_id"`
+	}
+	database.GetDB().Table("sys_user").
+		Select("real_name, organization_id").
+		Where("id = ?", req.UserID).
+		First(&user)
+
+	var startDate, endDate time.Time
+	year := int(req.Year)
+	month := int(req.Month)
+	startDate = time.Date(year, time.Month(month), 1, 0, 0, 0, 0, time.Local)
+	endDate = startDate.AddDate(0, 1, 0)
+
+	var totalCases int64
+	database.GetDB().Table("dispute_case").
+		Where("mediator_id = ?", req.UserID).
+		Where("created_at >= ? AND created_at < ?", startDate, endDate).
+		Where("deleted_at IS NULL").
+		Count(&totalCases)
+
+	var closedCases int64
+	database.GetDB().Table("dispute_case").
+		Where("mediator_id = ?", req.UserID).
+		Where("status = ?", constants.CaseStatusClosed).
+		Where("closed_time >= ? AND closed_time < ?", startDate, endDate).
+		Where("deleted_at IS NULL").
+		Count(&closedCases)
+
+	var successCases int64
+	database.GetDB().Table("dispute_case").
+		Where("mediator_id = ?", req.UserID).
+		Where("status = ?", constants.CaseStatusClosed).
+		Where("mediation_result = ?", constants.MediationResultSuccess).
+		Where("closed_time >= ? AND closed_time < ?", startDate, endDate).
+		Where("deleted_at IS NULL").
+		Count(&successCases)
+
+	var avgDays float64
+	database.GetDB().Table("dispute_case").
+		Where("mediator_id = ?", req.UserID).
+		Where("status = ?", constants.CaseStatusClosed).
+		Where("closed_time >= ? AND closed_time < ?", startDate, endDate).
+		Where("deleted_at IS NULL").
+		Select("AVG(TIMESTAMPDIFF(DAY, created_at, closed_time))").
+		Scan(&avgDays)
+
+	var avgSatisfaction float64
+	database.GetDB().Table("dispute_case").
+		Where("mediator_id = ?", req.UserID).
+		Where("status = ?", constants.CaseStatusClosed).
+		Where("closed_time >= ? AND closed_time < ?", startDate, endDate).
+		Where("deleted_at IS NULL").
+		Where("satisfaction_score > 0").
+		Select("AVG(satisfaction_score)").
+		Scan(&avgSatisfaction)
+
+	var urgeCount int64
+	database.GetDB().Table("workflow_urge").
+		Where("current_handler_id = ?", req.UserID).
+		Where("created_at >= ? AND created_at < ?", startDate, endDate).
+		Count(&urgeCount)
+
+	var indicators []map[string]interface{}
+	database.GetDB().Table("performance_indicator_config").
+		Where("status = 1").
+		Find(&indicators)
+
+	indicatorScoreMap := make(map[string]float64)
+	totalWeight := 0.0
+	totalScore := 0.0
+
+	for _, ind := range indicators {
+		code, _ := ind["indicator_code"].(string)
+		weight, _ := ind["weight"].(float64)
+		if code == "" {
+			continue
+		}
+		totalWeight += weight
+		score := calculateIndicatorScore(code, totalCases, closedCases, successCases, avgDays, avgSatisfaction, urgeCount)
+		indicatorScoreMap[code] = score
+		totalScore += score * weight
+	}
+
+	if totalWeight > 0 {
+		totalScore = totalScore / totalWeight
+	}
+	totalScore = math.Round(totalScore*100) / 100
+
+	level := "C"
+	if totalScore >= 90 {
+		level = "S"
+	} else if totalScore >= 80 {
+		level = "A"
+	} else if totalScore >= 70 {
+		level = "B"
+	} else if totalScore >= 60 {
+		level = "C"
+	} else {
+		level = "D"
+	}
+
+	closeRate := 0.0
+	if totalCases > 0 {
+		closeRate = math.Round(float64(closedCases)/float64(totalCases)*10000) / 100
+	}
+	successRate := 0.0
+	if closedCases > 0 {
+		successRate = math.Round(float64(successCases)/float64(closedCases)*10000) / 100
+	}
+
+	scoreID := utils.GenerateID()
+	scoreData := map[string]interface{}{
+		"id":                scoreID,
+		"user_id":           req.UserID,
+		"user_name":         user.RealName,
+		"period":            req.Period,
+		"year":              req.Year,
+		"month":             req.Month,
+		"quarter":           0,
+		"start_date":        startDate,
+		"end_date":          endDate,
+		"case_count":        totalCases,
+		"closed_count":      closedCases,
+		"success_count":     successCases,
+		"close_rate":        closeRate,
+		"success_rate":      successRate,
+		"avg_days":          math.Round(avgDays*100) / 100,
+		"satisfaction":      math.Round(avgSatisfaction*100) / 100,
+		"urge_count":        urgeCount,
+		"total_score":       totalScore,
+		"level":             level,
+		"calculated_by":     userInfo.UserID,
+		"calculated_by_name": userInfo.RealName,
+		"organization_id":   user.OrganizationID,
+	}
+
+	for code, sc := range indicatorScoreMap {
+		scoreData[code+"_score"] = math.Round(sc*100) / 100
+	}
+
+	tx := database.GetDB().Begin()
+	tx.Table("performance_score").Where("user_id = ? AND year = ? AND month = ? AND period = ?",
+		req.UserID, req.Year, req.Month, req.Period).Delete(nil)
+	if err := tx.Table("performance_score").Create(scoreData).Error; err != nil {
+		tx.Rollback()
+		logger.Error("Create performance score failed", logger.Error(err))
+		return err
+	}
+
+	snapshotData := map[string]interface{}{
+		"user_id":          req.UserID,
+		"user_name":        user.RealName,
+		"org_id":           user.OrganizationID,
+		"year":             req.Year,
+		"month":            req.Month,
+		"case_count":       totalCases,
+		"closed_count":     closedCases,
+		"close_rate":       closeRate,
+		"success_count":    successCases,
+		"success_rate":     successRate,
+		"avg_days":         math.Round(avgDays*100) / 100,
+		"avg_satisfaction": math.Round(avgSatisfaction*100) / 100,
+		"urge_count":       urgeCount,
+		"total_score":      totalScore,
+		"level":            level,
+	}
+	var orgName string
+	database.GetDB().Table("sys_organization").Select("org_name").Where("id = ?", user.OrganizationID).Scan(&orgName)
+	snapshotData["org_name"] = orgName
+	tx.Table("performance_monthly_snapshot").Where("user_id = ? AND year = ? AND month = ?", req.UserID, req.Year, req.Month).Delete(nil)
+	tx.Table("performance_monthly_snapshot").Create(snapshotData)
+
+	tx.Commit()
+	return nil
 }
 
 func CreatePerformanceInterview(ctx context.Context, c *app.RequestContext) {
@@ -947,10 +1367,103 @@ func CreatePerformanceInterview(ctx context.Context, c *app.RequestContext) {
 		return
 	}
 
+	sendInterviewNotification(req, interviewID, userName, userInfo)
+
 	c.JSON(http.StatusOK, response.SuccessWithMessage(map[string]interface{}{
 		"id":           interviewID,
 		"interviewNo":  interviewNo,
 	}, "绩效面谈记录创建成功"))
+}
+
+func sendInterviewNotification(req *struct {
+	ScoreID         int64
+	UserID          int64
+	UserName        string
+	PeriodType      int32
+	PeriodValue     string
+	TotalScore      float64
+	Level           string
+	InterviewTime   string
+	InterviewPlace  string
+	InterviewType   int32
+	Strengths       string
+	Weaknesses      string
+	ImprovementPlan string
+	TargetNextPeriod string
+}, interviewID int64, userName string, userInfo *middleware.UserClaims) {
+	var receiver struct {
+		RealName string `gorm:"column:real_name"`
+		Phone    string `gorm:"column:phone"`
+	}
+	database.GetDB().Table("sys_user").
+		Select("real_name, phone").
+		Where("id = ?", req.UserID).
+		First(&receiver)
+
+	interviewTypeMap := map[int32]string{
+		1: "绩效反馈", 2: "改进计划", 3: "表彰面谈", 4: "预警面谈",
+	}
+	interviewType := interviewTypeMap[req.InterviewType]
+
+	title := "【绩效面谈】您有待确认的绩效面谈记录"
+	content := fmt.Sprintf(`尊敬的%s您好：
+您的%s绩效面谈已创建，请及时登录系统查看并确认。
+面谈类型：%s
+面谈时间：%s
+面谈地点：%s
+综合得分：%.1f分（%s）
+面谈人：%s
+
+请登录系统查看详细面谈内容，填写您的意见并确认。`,
+		receiver.RealName, req.PeriodValue, interviewType, req.InterviewTime,
+		req.InterviewPlace, req.TotalScore, req.Level, userInfo.RealName)
+
+	now := time.Now()
+	paramsJSON, _ := json.Marshal(map[string]interface{}{
+		"mediatorName":   receiver.RealName,
+		"periodValue":    req.PeriodValue,
+		"interviewType":  interviewType,
+		"interviewTime":  req.InterviewTime,
+		"interviewPlace": req.InterviewPlace,
+		"totalScore":     fmt.Sprintf("%.1f", req.TotalScore),
+		"level":          req.Level,
+		"interviewerName": userInfo.RealName,
+		"interviewId":    interviewID,
+	})
+
+	notificationRecord := map[string]interface{}{
+		"receiver_id":   req.UserID,
+		"receiver_name": receiver.RealName,
+		"template_code": "TPL_PERFORMANCE_INTERVIEW",
+		"title":         title,
+		"content":       content,
+		"channel_type":  "app",
+		"receiver_type": 2,
+		"status":        1,
+		"params":        string(paramsJSON),
+		"send_time":     now,
+		"sender_id":     userInfo.UserID,
+		"sender_name":   userInfo.RealName,
+		"msg_no":        fmt.Sprintf("MSG%s", time.Now().Format("20060102150405")),
+		"biz_type":      6,
+		"biz_id":        interviewID,
+	}
+
+	database.GetDB().Table("notification_record").Create(notificationRecord)
+
+	go func(phone, name string) {
+		msg := map[string]interface{}{
+			"receiverId":   req.UserID,
+			"receiverName": name,
+			"phone":        phone,
+			"title":        title,
+			"content":      content,
+			"notifyType":   "app,sms",
+			"templateCode": "TPL_PERFORMANCE_INTERVIEW",
+			"sentBy":       userInfo.RealName,
+		}
+		mq.SendMessage(constants.MQTopicNotification, msg)
+	}(receiver.Phone, receiver.RealName)
 }
 
 func GetPerformanceInterviewList(ctx context.Context, c *app.RequestContext) {

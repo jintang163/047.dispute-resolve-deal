@@ -73,3 +73,10 @@ VALUES
 ('AVG_DAYS', '平均调解时长', 3, 0.20, 100.00, '逆向指标: 7天内满分，超过30天最低分', 7.00, '从受理到结案的平均天数', 3, 1),
 ('SATISFACTION', '满意度', 4, 0.20, 100.00, '平均满意度评分/5*100', 4.50, '群众满意度评分均值(1-5)', 4, 1),
 ('URGE_COUNT', '被催办次数', 3, 0.15, 100.00, '逆向指标: 0次满分，超过5次最低分', 0.00, '被催办的次数(越少越好)', 5, 1);
+
+-- 新增绩效面谈通知模板
+INSERT IGNORE INTO notification_template (template_code, template_name, channel_type, title_template, content_template, params, status)
+VALUES
+('TPL_PERFORMANCE_INTERVIEW', '绩效面谈通知', 'app,sms', '【绩效面谈】您有待确认的绩效面谈记录',
+ '尊敬的{{mediatorName}}您好：\n您的{{periodValue}}绩效面谈已创建，请及时登录系统查看并确认。\n面谈类型：{{interviewType}}\n面谈时间：{{interviewTime}}\n面谈地点：{{interviewPlace}}\n综合得分：{{totalScore}}分（{{level}}）\n面谈人：{{interviewerName}}\n\n请登录系统查看详细面谈内容，填写您的意见并确认。',
+ '["mediatorName","periodValue","interviewType","interviewTime","interviewPlace","totalScore","level","interviewerName","interviewId"]', 1);

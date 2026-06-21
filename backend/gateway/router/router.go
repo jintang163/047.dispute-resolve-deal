@@ -219,6 +219,7 @@ func RegisterRoutes(h *app.Hertz) {
 			performance.GET("/my", handler.GetMyPerformance)
 			performance.GET("/:userId", handler.GetPerformanceDetail)
 			performance.POST("/calculate", handler.CalculatePerformanceScore)
+			performance.POST("/batch-calculate", handler.BatchCalculatePerformanceScore)
 			performance.GET("/trend", handler.GetPerformanceTrend)
 			performance.GET("/ranking", handler.GetPerformanceRanking)
 			performance.GET("/indicator-config", handler.GetPerformanceIndicatorConfig)

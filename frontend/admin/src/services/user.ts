@@ -317,8 +317,12 @@ export const performanceService = {
     return request.get<{ indicators: IndicatorConfig[]; totalWeight: number }>('/v1/performance/indicator-config');
   },
 
-  updateIndicatorConfig: (indicators: { id: number; weight: number }[]) => {
-    return request.put('/v1/performance/indicator-config', { indicators });
+  updateIndicatorConfig: (indicators: { id: number; weight: number }[], autoRecalculate?: boolean) => {
+    return request.put('/v1/performance/indicator-config', { indicators, autoRecalculate });
+  },
+
+  batchCalculateScore: (data: { year: number; month: number; organizationId?: number }) => {
+    return request.post('/v1/performance/batch-calculate', data);
   },
 
   getInterviewList: (params?: any) => {

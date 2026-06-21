@@ -2,16 +2,19 @@ import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import {
   Row, Col, Card, Statistic, Space, Tag, DatePicker, Table, App, Progress,
   Modal, Form, InputNumber, Input, Select, Button, Tooltip, Divider, Drawer, Descriptions,
+  Switch, Badge, Popover, List, Empty, Spin, Alert,
 } from 'antd';
 import {
   TrophyOutlined, FileTextOutlined, CheckCircleOutlined, SmileOutlined,
   ClockCircleOutlined, TeamOutlined, RiseOutlined, StarOutlined,
   ArrowUpOutlined, ArrowDownOutlined, BellOutlined, SettingOutlined,
-  DownloadOutlined, EditOutlined, EyeOutlined,
+  DownloadOutlined, EditOutlined, EyeOutlined, ReloadOutlined,
+  CalculatorOutlined, CheckOutlined, DatabaseOutlined, DashboardOutlined,
 } from '@ant-design/icons';
 import ReactECharts from 'echarts-for-react';
 import dayjs, { Dayjs } from 'dayjs';
 import { performanceService, PerformanceStats, IndicatorConfig, PerformanceInterview } from '../../services/user';
+import { notificationService, Notification } from '../../services/notification';
 import { useUserStore } from '../../stores/user';
 
 const { MonthPicker } = DatePicker;
@@ -32,9 +35,11 @@ const ChangeTag: React.FC<{ value: number; suffix?: string }> = ({ value, suffix
 };
 
 const Performance: React.FC = () => {
-  const { message } = App.useApp();
+  const { message, modal } = App.useApp();
   const userInfo = useUserStore((s) => s.userInfo);
   const isAdmin = userInfo?.role === '4' || userInfo?.role === '1';
+  const isLeader = userInfo?.role === '2';
+  const isMediator = userInfo?.role === '3';
 
   const [selectedMonth, setSelectedMonth] = useState<Dayjs>(dayjs());
   const [loading, setLoading] = useState(false);
@@ -47,11 +52,41 @@ const Performance: React.FC = () => {
 
   const [weightModalOpen, setWeightModalOpen] = useState(false);
   const [weightForm] = Form.useForm();
+  const [autoRecalculate, setAutoRecalculate] = useState(true);
   const [interviewModalOpen, setInterviewModalOpen] = useState(false);
   const [interviewForm] = Form.useForm();
   const [interviewDetailOpen, setInterviewDetailOpen] = useState(false);
   const [interviewDetail, setInterviewDetail] = useState<any>(null);
   const [selectedMediator, setSelectedMediator] = useState<PerformanceStats | null>(null);
+
+  const [batchCalculating, setBatchCalculating] = useState(false);
+  const [unreadCount, setUnreadCount] = useState(0);
+  const [notifications, setNotifications] = useState<Notification[]>([]);
+  const [confirmModalOpen, setConfirmModalOpen] = useState(false);
+  const [confirmForm] = Form.useForm();
+  const [pendingInterview, setPendingInterview] = useState<any>(null);
+  const [notificationPopoverOpen, setNotificationPopoverOpen] = useState(false);
+
+  const fetchNotifications = useCallback(async () => {
+    try {
+      const res = await notificationService.getMyNotifications({ page: 1, pageSize: 10, isRead: false });
+      const data = (res as any)?.data || res || {};
+      setNotifications(data?.list || []);
+      setUnreadCount(data?.extra?.unreadCount || 0);
+    } catch (error) {
+      console.error('Fetch notifications error:', error);
+    }
+  }, []);
+
+  const fetchUnreadCount = useCallback(async () => {
+    try {
+      const res = await notificationService.getUnreadCount();
+      const data = (res as any)?.data || res || {};
+      setUnreadCount(data?.total || 0);
+    } catch (error) {
+      console.error('Fetch unread count error:', error);
+    }
+  }, []);
 
   const fetchDashboard = useCallback(async () => {
     try {
@@ -105,7 +140,46 @@ const Performance: React.FC = () => {
     fetchDashboard();
     fetchIndicators();
     fetchInterviews(1);
-  }, [fetchDashboard, fetchInterviews]);
+    fetchUnreadCount();
+
+    const interval = setInterval(fetchUnreadCount, 30000);
+    return () => clearInterval(interval);
+  }, [fetchDashboard, fetchInterviews, fetchUnreadCount]);
+
+  const handleBatchCalculate = async () => {
+    try {
+      setBatchCalculating(true);
+      const y = selectedMonth.year();
+      const m = selectedMonth.month() + 1;
+      await performanceService.batchCalculateScore({ year: y, month: m });
+      message.success('批量计算完成');
+      fetchDashboard();
+      fetchInterviews(1);
+    } catch (error) {
+      message.error('批量计算失败');
+    } finally {
+      setBatchCalculating(false);
+    }
+  };
+
+  const handleConfirmInterview = async (record: any) => {
+    setPendingInterview(record);
+    confirmForm.resetFields();
+    setConfirmModalOpen(true);
+  };
+
+  const submitConfirmInterview = async () => {
+    try {
+      const values = await confirmForm.validateFields();
+      await performanceService.confirmInterview(pendingInterview.id, values.mediatorComment);
+      message.success('确认成功');
+      setConfirmModalOpen(false);
+      fetchInterviews(1);
+      fetchDashboard();
+    } catch (error) {
+      message.error('确认失败');
+    }
+  };
 
   const summary = dashboardData.summary || {};
   const comparison = comparisonData.comparison || {};
@@ -316,11 +390,34 @@ const Performance: React.FC = () => {
         id: ind.id,
         weight: values[`weight_${ind.id}`],
       }));
-      await performanceService.updateIndicatorConfig(indicators);
-      message.success('权重更新成功');
-      setWeightModalOpen(false);
-      fetchIndicators();
-      fetchDashboard();
+
+      if (autoRecalculate) {
+        modal.confirm({
+          title: '确认更新权重并重新计算',
+          content: `是否更新权重并立即重新计算 ${selectedMonth.format('YYYY年MM月')} 所有调解员的绩效得分？`,
+          okText: '确认更新并计算',
+          cancelText: '仅更新权重',
+          onOk: async () => {
+            await performanceService.updateIndicatorConfig(indicators, true);
+            message.success('权重更新成功，已触发重新计算');
+            setWeightModalOpen(false);
+            fetchIndicators();
+            setTimeout(fetchDashboard, 500);
+            setTimeout(() => fetchInterviews(1), 800);
+          },
+          onCancel: async () => {
+            await performanceService.updateIndicatorConfig(indicators, false);
+            message.success('权重更新成功，后续计算将使用新权重');
+            setWeightModalOpen(false);
+            fetchIndicators();
+          },
+        });
+      } else {
+        await performanceService.updateIndicatorConfig(indicators, false);
+        message.success('权重更新成功');
+        setWeightModalOpen(false);
+        fetchIndicators();
+      }
     } catch (error) {
       message.error('权重更新失败');
     }
@@ -376,9 +473,16 @@ const Performance: React.FC = () => {
       render: (v: string) => <Tag color={v === '已确认' ? 'green' : v === '待确认' ? 'orange' : 'default'}>{v}</Tag>,
     },
     {
-      title: '操作', width: 60,
+      title: '操作', width: 140,
       render: (_: any, record: any) => (
-        <Button type="link" size="small" icon={<EyeOutlined />} onClick={() => handleViewInterview(record.id)} />
+        <Space size={4}>
+          <Button type="link" size="small" icon={<EyeOutlined />} onClick={() => handleViewInterview(record.id)} />
+          {isMediator && record.status === 1 && (
+            <Button type="primary" size="small" icon={<CheckOutlined />} onClick={() => handleConfirmInterview(record)}>
+              确认
+            </Button>
+          )}
+        </Space>
       ),
     },
   ];
@@ -386,20 +490,88 @@ const Performance: React.FC = () => {
   return (
     <Space direction="vertical" size={16} style={{ width: '100%' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <h2 style={{ margin: 0 }}>
-          <TrophyOutlined style={{ color: '#faad14', marginRight: 8 }} />
-          调解员绩效考核看板
-        </h2>
         <Space>
+          <h2 style={{ margin: 0 }}>
+            <TrophyOutlined style={{ color: '#faad14', marginRight: 8 }} />
+            调解员绩效考核看板
+          </h2>
+          <Tag icon={<DatabaseOutlined />} color={summary.dataSource === 'realtime' ? 'orange' : 'green'}>
+            {summary.dataSource === 'realtime' ? '实时计算' : '快照数据'}
+          </Tag>
+        </Space>
+        <Space>
+          <Popover
+            open={notificationPopoverOpen}
+            onOpenChange={(open) => setNotificationPopoverOpen(open)}
+            placement="bottomRight"
+            content={
+              <div style={{ width: 320, maxHeight: 400, overflowY: 'auto' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                  <strong>消息通知</strong>
+                  {unreadCount > 0 && (
+                    <Button type="link" size="small" onClick={async () => {
+                      await notificationService.markAllAsRead();
+                      fetchUnreadCount();
+                      fetchNotifications();
+                    }}>全部已读</Button>
+                  )}
+                </div>
+                <Divider style={{ margin: '8px 0' }} />
+                {notifications.length === 0 ? (
+                  <Empty description="暂无新消息" image={Empty.PRESENTED_IMAGE_SIMPLE} />
+                ) : (
+                  <List
+                    dataSource={notifications}
+                    size="small"
+                    renderItem={(item) => (
+                      <List.Item
+                        style={{ cursor: 'pointer', padding: '8px 0', borderBottom: '1px solid #f0f0f0' }}
+                        onClick={async () => {
+                          await notificationService.markAsRead(item.id);
+                          fetchUnreadCount();
+                          setNotificationPopoverOpen(false);
+                        }}
+                      >
+                        <List.Item.Meta
+                          title={<span style={{ fontSize: 13 }}>{item.title}</span>}
+                          description={
+                            <span style={{ fontSize: 12, color: '#999' }}>
+                              {item.content?.substring(0, 50)}...
+                            </span>
+                          }
+                        />
+                      </List.Item>
+                    )}
+                  />
+                )}
+              </div>
+            }
+            trigger="click"
+          >
+            <Badge count={unreadCount} size="small">
+              <Button icon={<BellOutlined />} shape="circle" />
+            </Badge>
+          </Popover>
           <MonthPicker
             value={selectedMonth}
             onChange={(date) => { if (date) setSelectedMonth(date); }}
             style={{ width: 180 }}
             allowClear={false}
           />
+          {(isAdmin || isLeader) && (
+            <Button
+              icon={<CalculatorOutlined />}
+              loading={batchCalculating}
+              onClick={handleBatchCalculate}
+              type="primary"
+            >
+              批量计算
+            </Button>
+          )}
           {isAdmin && (
             <Button icon={<SettingOutlined />} onClick={openWeightModal}>考核权重</Button>
           )}
+          <Button icon={<ReloadOutlined />} onClick={fetchDashboard} loading={loading}>刷新</Button>
           <Button icon={<DownloadOutlined />} onClick={handleExportExcel}>导出Excel</Button>
         </Space>
       </div>
@@ -522,8 +694,17 @@ const Performance: React.FC = () => {
             </Form.Item>
           ))}
         </Form>
-        <div style={{ color: '#faad14', fontSize: 12 }}>
-          <RiseOutlined /> 权重调整后，下次计算考核得分时生效
+        <div style={{ marginTop: 16, padding: 12, background: '#f5f5f5', borderRadius: 8 }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <Space>
+              <RiseOutlined style={{ color: '#faad14' }} />
+              <span style={{ color: '#666', fontSize: 13 }}>自动重新计算本月绩效得分</span>
+            </Space>
+            <Switch checked={autoRecalculate} onChange={setAutoRecalculate} />
+          </div>
+          <div style={{ color: '#999', fontSize: 12, marginTop: 4 }}>
+            开启后保存权重时将立即重新计算所有调解员的绩效数据
+          </div>
         </div>
       </Modal>
 
@@ -580,6 +761,13 @@ const Performance: React.FC = () => {
         open={interviewDetailOpen}
         onClose={() => setInterviewDetailOpen(false)}
         width={520}
+        extra={
+          isMediator && interviewDetail?.status === 1 ? (
+            <Button type="primary" icon={<CheckOutlined />} onClick={() => handleConfirmInterview(interviewDetail)}>
+              确认面谈
+            </Button>
+          ) : null
+        }
       >
         {interviewDetail && (
           <Descriptions column={1} bordered size="small">
@@ -605,6 +793,56 @@ const Performance: React.FC = () => {
           </Descriptions>
         )}
       </Drawer>
+
+      <Modal
+        title={
+          <Space>
+            <CheckOutlined style={{ color: '#52c41a' }} />
+            确认绩效面谈
+          </Space>
+        }
+        open={confirmModalOpen}
+        onOk={submitConfirmInterview}
+        onCancel={() => setConfirmModalOpen(false)}
+        width={560}
+        okText="确认提交"
+        cancelText="取消"
+      >
+        {pendingInterview && (
+          <Space direction="vertical" size={12} style={{ width: '100%' }}>
+            <Alert
+              type="info"
+              showIcon
+              message={`您正在确认 ${pendingInterview.period_value} 的${pendingInterview.interview_type_name}记录`}
+              description={`面谈编号: ${pendingInterview.interview_no}，综合得分: ${pendingInterview.total_score}分(${pendingInterview.level})`}
+            />
+            <Descriptions column={2} size="small" bordered>
+              <Descriptions.Item label="面谈人">{pendingInterview.interviewer_name}</Descriptions.Item>
+              <Descriptions.Item label="面谈时间">{pendingInterview.interview_time}</Descriptions.Item>
+              <Descriptions.Item label="工作亮点" span={2}>{pendingInterview.strengths || '-'}</Descriptions.Item>
+              <Descriptions.Item label="待改进" span={2}>{pendingInterview.weaknesses || '-'}</Descriptions.Item>
+              <Descriptions.Item label="改进计划" span={2}>{pendingInterview.improvement_plan || '-'}</Descriptions.Item>
+              <Descriptions.Item label="下期目标" span={2}>{pendingInterview.target_next_period || '-'}</Descriptions.Item>
+            </Descriptions>
+            <Form form={confirmForm} layout="vertical">
+              <Form.Item
+                label="您的意见和反馈（必填）"
+                name="mediatorComment"
+                rules={[{ required: true, message: '请填写您的意见和反馈' }]}
+              >
+                <Input.TextArea
+                  rows={4}
+                  placeholder="请填写您对本次绩效面谈的意见、建议或确认信息..."
+                />
+              </Form.Item>
+            </Form>
+            <div style={{ color: '#999', fontSize: 12 }}>
+              <CheckOutlined style={{ color: '#52c41a', marginRight: 4 }} />
+              确认后，您将无法再修改反馈内容
+            </div>
+          </Space>
+        )}
+      </Modal>
     </Space>
   );
 };
