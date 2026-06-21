@@ -374,4 +374,16 @@ export const disputeService = {
   queryPopulationByIDCard: (idCard: string) => {
     return request.post<PopulationInfo>('/v1/idcard/query', { idCard });
   },
+
+  createMediationRecord: (caseId: string, params: any) => {
+    return request.post<{ id: string }>(`/dispute/${caseId}/mediation`, params);
+  },
+
+  updateMediationRecord: (caseId: string, recordId: string, params: any) => {
+    return request.put(`/dispute/${caseId}/mediation/${recordId}`, params);
+  },
+
+  getMediationRecords: (caseId: string) => {
+    return request.get<any[]>(`/dispute/${caseId}/mediation`);
+  },
 };

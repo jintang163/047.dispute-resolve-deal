@@ -336,11 +336,19 @@ func ApplyMediationTemplate(ctx context.Context, c *app.RequestContext) {
 		MediatorID   int64  `gorm:"column:mediator_id"`
 		MediatorName string `gorm:"column:mediator_name"`
 	}
-	database.GetDB().Table("dispute_case").
-		Where("id = ?", req.CaseID).First(&caseData)
+	if err := database.GetDB().Table("dispute_case").
+		Where("id = ?", req.CaseID).First(&caseData).Error; err != nil {
+		c.JSON(http.StatusBadRequest, response.BadRequest("案件不存在"))
+		return
+	}
 
 	if caseData.Status != constants.CaseStatusMediating {
 		c.JSON(http.StatusBadRequest, response.BadRequest("只有调解中状态的案件才能使用模板"))
+		return
+	}
+
+	if caseData.MediatorID != userInfo.UserID && userInfo.Role > constants.RoleMediator {
+		c.JSON(http.StatusForbidden, response.Forbidden("只有案件调解员才能记录调解信息"))
 		return
 	}
 
@@ -363,29 +371,32 @@ func ApplyMediationTemplate(ctx context.Context, c *app.RequestContext) {
 
 	recordID := utils.GenerateID()
 	record := map[string]interface{}{
-		"id":                recordID,
-		"case_id":           req.CaseID,
-		"case_no":           caseData.CaseNo,
-		"record_type":       recordType,
-		"mediator_id":       userInfo.UserID,
-		"mediator_name":     userInfo.RealName,
-		"participant_names": tpl.ParticipantsTemplate,
-		"mediation_time":    now,
-		"mediation_place":   tpl.MediationPlace,
-		"mediation_duration": mediationDuration,
-		"process_content":   processContent,
-		"dispute_focus":     disputeFocus,
-		"mediation_opinion": mediationOpinion,
-		"agreement_content": agreementContent,
-		"result":            0,
-		"next_step":         nextStep,
-		"is_key_record":     0,
+		"id":                  recordID,
+		"case_id":             req.CaseID,
+		"case_no":             caseData.CaseNo,
+		"record_type":         recordType,
+		"mediator_id":         caseData.MediatorID,
+		"mediator_name":       caseData.MediatorName,
+		"participant_names":   tpl.ParticipantsTemplate,
+		"mediation_time":      now,
+		"mediation_place":     tpl.MediationPlace,
+		"mediation_duration":  mediationDuration,
+		"process_content":     processContent,
+		"dispute_focus":       disputeFocus,
+		"mediation_opinion":   mediationOpinion,
+		"agreement_content":   agreementContent,
+		"result":              0,
+		"next_step":           nextStep,
+		"is_key_record":       0,
+		"is_draft":            1,
+		"template_id":         id,
+		"template_name":       tpl.TemplateName,
 	}
 
 	tx := database.GetDB().Begin()
 	if err := tx.Table("dispute_mediation_record").Create(record).Error; err != nil {
 		tx.Rollback()
-		logger.Error("套用模板创建调解记录失败", zap.Error(err))
+		logger.Error("套用模板创建调解记录草稿失败", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, response.Error("创建失败"))
 		return
 	}
@@ -406,7 +417,7 @@ func ApplyMediationTemplate(ctx context.Context, c *app.RequestContext) {
 		"case_id":          req.CaseID,
 		"case_no":          caseData.CaseNo,
 		"operation_type":   "MEDIATION_TEMPLATE_APPLY",
-		"operation_detail": fmt.Sprintf("使用模板「%s」创建调解记录", tpl.TemplateName),
+		"operation_detail": fmt.Sprintf("使用模板「%s」创建调解记录草稿，待调解员编辑确认", tpl.TemplateName),
 		"operator_id":      userInfo.UserID,
 		"operator_name":    userInfo.RealName,
 	}
@@ -416,20 +427,25 @@ func ApplyMediationTemplate(ctx context.Context, c *app.RequestContext) {
 
 	c.JSON(http.StatusOK, response.SuccessWithMessage(map[string]interface{}{
 		"recordId":            recordID,
-		"templateId":         id,
-		"templateName":       tpl.TemplateName,
-		"recordType":         recordType,
-		"mediationPlace":     tpl.MediationPlace,
-		"mediationDuration":  mediationDuration,
-		"processContent":     processContent,
-		"disputeFocus":       disputeFocus,
-		"mediationOpinion":   mediationOpinion,
-		"agreementContent":   agreementContent,
-		"nextStep":           nextStep,
-		"tips":               tpl.Tips,
-		"isDraft":            true,
-		"tip":                "模板已套用，请根据实际情况微调内容后保存",
-	}, "模板套用成功"))
+		"templateId":          id,
+		"templateName":        tpl.TemplateName,
+		"recordType":          recordType,
+		"recordTypeName":      map[int32]string{1: "初次调解", 2: "再次调解", 3: "补充调解"}[recordType],
+		"mediationPlace":      tpl.MediationPlace,
+		"mediationDuration":   mediationDuration,
+		"mediationTime":       now,
+		"mediatorId":          caseData.MediatorID,
+		"mediatorName":        caseData.MediatorName,
+		"participantNames":    tpl.ParticipantsTemplate,
+		"processContent":      processContent,
+		"disputeFocus":        disputeFocus,
+		"mediationOpinion":    mediationOpinion,
+		"agreementContent":    agreementContent,
+		"nextStep":            nextStep,
+		"tips":                tpl.Tips,
+		"isDraft":             true,
+		"tip":                 "模板已套用为草稿，请根据实际情况微调内容后提交保存",
+	}, "模板套用成功，已生成草稿记录"))
 }
 
 func GetMediationTemplateCategories(ctx context.Context, c *app.RequestContext) {

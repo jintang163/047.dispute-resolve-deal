@@ -40,6 +40,30 @@ CREATE TABLE IF NOT EXISTS mediation_record_template (
     INDEX idx_deleted_at(deleted_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='调解记录模板表';
 
+-- 模板使用日志表
+CREATE TABLE IF NOT EXISTS mediation_record_template_use_log (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT COMMENT '主键ID',
+    template_id BIGINT NOT NULL COMMENT '模板ID',
+    case_id BIGINT DEFAULT 0 COMMENT '案件ID',
+    record_id BIGINT DEFAULT 0 COMMENT '生成的调解记录ID',
+    user_id BIGINT DEFAULT 0 COMMENT '使用人ID',
+    user_name VARCHAR(64) DEFAULT '' COMMENT '使用人姓名',
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    INDEX idx_template_id(template_id),
+    INDEX idx_case_id(case_id),
+    INDEX idx_record_id(record_id),
+    INDEX idx_user_id(user_id),
+    INDEX idx_created_at(created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='调解记录模板使用日志表';
+
+-- 为调解记录表增加草稿状态和模板关联字段
+ALTER TABLE dispute_mediation_record 
+    ADD COLUMN IF NOT EXISTS is_draft TINYINT DEFAULT 0 COMMENT '是否草稿: 0-正式记录 1-草稿' AFTER is_key_record,
+    ADD COLUMN IF NOT EXISTS template_id BIGINT DEFAULT 0 COMMENT '使用的模板ID' AFTER is_draft,
+    ADD COLUMN IF NOT EXISTS template_name VARCHAR(128) DEFAULT '' COMMENT '使用的模板名称' AFTER template_id,
+    ADD INDEX IF NOT EXISTS idx_is_draft(is_draft),
+    ADD INDEX IF NOT EXISTS idx_template_id(template_id);
+
 -- =====================================================
 -- 初始化系统内置模板
 -- =====================================================

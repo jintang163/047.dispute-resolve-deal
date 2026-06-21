@@ -89,6 +89,17 @@ export interface MediationRecord {
   resultName?: string;
   protocol?: string;
   createTime?: string;
+  isDraft?: boolean;
+  templateId?: string;
+  templateName?: string;
+  recordType?: number;
+  recordTypeName?: string;
+  processContent?: string;
+  disputeFocus?: string;
+  mediationOpinion?: string;
+  agreementContent?: string;
+  nextStep?: string;
+  participantNames?: string;
 }
 
 export interface MediationListParams {

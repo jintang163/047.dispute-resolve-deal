@@ -18,7 +18,9 @@ import {
   Alert,
   Rate,
   Empty,
+  Typography,
 } from 'antd';
+const { Text } = Typography;
 import {
   ArrowLeftOutlined,
   EditOutlined,
@@ -41,6 +43,8 @@ import { ProDescriptions } from '@ant-design/pro-components';
 import { disputeService, DisputeDetail, MediatorOption } from '../../services/dispute';
 import { caseLibraryService, CaseSearchResult } from '../../services/caseLibrary';
 import ProtocolGenerator from '../Mediation/ProtocolGenerator';
+import MediationRecordEditor, { MediationRecordFormData } from '../../components/MediationRecordEditor';
+import { MediationRecord } from '../../services/user';
 import dayjs from 'dayjs';
 
 const statusColorMap: Record<string, string> = {
@@ -125,12 +129,31 @@ const DisputeDetail: React.FC = () => {
   const [scoreCaseId, setScoreCaseId] = useState<number>(0);
   const [scoreValue, setScoreValue] = useState(3);
 
+  const [recordEditorOpen, setRecordEditorOpen] = useState(false);
+  const [editingRecord, setEditingRecord] = useState<MediationRecord | undefined>(undefined);
+  const [mediationRecords, setMediationRecords] = useState<MediationRecord[]>([]);
+  const [recordsLoading, setRecordsLoading] = useState(false);
+
   useEffect(() => {
     if (id) {
       fetchDetail();
       fetchSimilarCases();
+      fetchMediationRecords();
     }
   }, [id]);
+
+  const fetchMediationRecords = async () => {
+    if (!id) return;
+    setRecordsLoading(true);
+    try {
+      const res = await disputeService.getMediationRecords(id);
+      const list: any[] = (res as any)?.data?.list || (res as any)?.data || [];
+      setMediationRecords(list);
+    } catch {
+    } finally {
+      setRecordsLoading(false);
+    }
+  };
 
   const fetchSimilarCases = async () => {
     if (!id) return;
@@ -178,6 +201,42 @@ const DisputeDetail: React.FC = () => {
     } catch {
       message.error('评分失败');
     }
+  };
+
+  const openRecordEditor = (record?: MediationRecord) => {
+    setEditingRecord(record);
+    setRecordEditorOpen(true);
+  };
+
+  const handleSubmitRecord = async (data: MediationRecordFormData, _isDraft: boolean) => {
+    if (!id) return { id: '' };
+
+    const submitPayload: any = {
+      recordType: data.recordType,
+      mediationTime: data.mediationTime,
+      place: data.mediationPlace,
+      mediationDuration: data.mediationDuration,
+      participants: Array.isArray(data.participants) ? data.participants : [],
+      processContent: data.processContent,
+      disputeFocus: data.disputeFocus,
+      mediationOpinion: data.mediationOpinion,
+      agreementContent: data.agreementContent,
+      nextStep: data.nextStep,
+      result: data.result,
+      isDraft: data.isDraft,
+      templateId: data.templateId,
+      templateName: data.templateName,
+    };
+
+    let res;
+    if (data.id) {
+      res = await disputeService.updateMediationRecord(id, String(data.id), submitPayload);
+    } else {
+      res = await disputeService.createMediationRecord(id, submitPayload);
+    }
+
+    await fetchMediationRecords();
+    return (res as any)?.data || res;
   };
 
   const fetchDetail = async () => {
@@ -272,6 +331,13 @@ const DisputeDetail: React.FC = () => {
                 onClick={() => setProtocolDrawerOpen(true)}
               >
                 AI生成协议
+              </Button>
+              <Button
+                icon={<FileTextOutlined />}
+                onClick={() => openRecordEditor()}
+                type="primary"
+              >
+                录入调解记录
               </Button>
               <Button type="primary" icon={<TeamOutlined />} onClick={openAssignModal}>
                 分配调解员
@@ -393,6 +459,150 @@ const DisputeDetail: React.FC = () => {
             </Card>
           </Col>
         </Row>
+
+        <Card
+          bordered={false}
+          style={{ borderRadius: 8 }}
+          title={
+            <Space>
+              <FileTextOutlined style={{ color: '#1677ff' }} />
+              <span>调解记录</span>
+              {mediationRecords.filter((r) => r.isDraft).length > 0 && (
+                <Tag color="orange">
+                  {mediationRecords.filter((r) => r.isDraft).length} 份草稿
+                </Tag>
+              )}
+            </Space>
+          }
+          extra={
+            <Button
+              type="primary"
+              size="small"
+              icon={<PlusOutlined />}
+              onClick={() => openRecordEditor()}
+            >
+              新增记录
+            </Button>
+          }
+        >
+          <Spin spinning={recordsLoading}>
+            {mediationRecords.length > 0 ? (
+              <Space direction="vertical" style={{ width: '100%' }} size={12}>
+                {mediationRecords.map((record) => (
+                  <Card
+                    key={record.id}
+                    size="small"
+                    type={record.isDraft ? 'inner' : undefined}
+                    style={{
+                      borderRadius: 6,
+                      borderLeft: record.isDraft ? '3px solid #faad14' : undefined,
+                    }}
+                    title={
+                      <Space>
+                        {record.isDraft && (
+                          <Tag color="orange" icon={<ClockCircleOutlined />}>
+                            草稿
+                          </Tag>
+                        )}
+                        {record.recordTypeName && <Tag color="blue">{record.recordTypeName}</Tag>}
+                        <Text strong>
+                          {record.mediationTime
+                            ? dayjs(record.mediationTime).format('YYYY-MM-DD HH:mm')
+                            : '未记录时间'}
+                        </Text>
+                        {record.templateName && (
+                          <Tag color="purple" icon={<BookOutlined />}>
+                            套用模板：{record.templateName}
+                          </Tag>
+                        )}
+                        {record.resultName && (
+                          <Tag
+                            color={
+                              record.result === 'success' || record.result === '1'
+                                ? 'green'
+                                : record.result === 'failed' || record.result === '2'
+                                ? 'red'
+                                : record.result === 'partial' || record.result === '3'
+                                ? 'blue'
+                                : 'default'
+                            }
+                          >
+                            {record.resultName}
+                          </Tag>
+                        )}
+                        {record.duration && (
+                          <Tag>时长 {record.duration} 分钟</Tag>
+                        )}
+                      </Space>
+                    }
+                    extra={
+                      <Space>
+                        <Button
+                          type="link"
+                          size="small"
+                          icon={<EditOutlined />}
+                          onClick={() => openRecordEditor(record)}
+                        >
+                          {record.isDraft ? '继续编辑' : '编辑'}
+                        </Button>
+                      </Space>
+                    }
+                  >
+                    {record.processContent && (
+                      <div style={{ marginBottom: 6 }}>
+                        <Text type="secondary" style={{ fontSize: 12 }}>调解过程：</Text>
+                        <div
+                          style={{
+                            fontSize: 13,
+                            lineHeight: 1.6,
+                            color: '#333',
+                            marginTop: 4,
+                            whiteSpace: 'pre-wrap',
+                            maxHeight: 80,
+                            overflow: 'hidden',
+                          }}
+                        >
+                          {record.processContent}
+                        </div>
+                      </div>
+                    )}
+                    {record.agreementContent && (
+                      <div>
+                        <Text type="secondary" style={{ fontSize: 12 }}>协议内容：</Text>
+                        <div
+                          style={{
+                            fontSize: 13,
+                            lineHeight: 1.6,
+                            color: '#1677ff',
+                            marginTop: 4,
+                            whiteSpace: 'pre-wrap',
+                            maxHeight: 60,
+                            overflow: 'hidden',
+                          }}
+                        >
+                          {record.agreementContent}
+                        </div>
+                      </div>
+                    )}
+                  </Card>
+                ))}
+              </Space>
+            ) : (
+              !recordsLoading && (
+                <Empty
+                  description={
+                    <Space direction="vertical" style={{ textAlign: 'center' }}>
+                      <span>暂无调解记录</span>
+                      <Button type="primary" size="small" onClick={() => openRecordEditor()}>
+                        录入第一条调解记录
+                      </Button>
+                    </Space>
+                  }
+                />
+              )
+            )}
+          </Spin>
+        </Card>
 
         <Card
           bordered={false}
@@ -671,6 +881,19 @@ const DisputeDetail: React.FC = () => {
           />
         </Spin>
       </Modal>
+
+      <MediationRecordEditor
+        open={recordEditorOpen}
+        onClose={() => setRecordEditorOpen(false)}
+        caseId={id || ''}
+        caseInfo={{
+          typeName: detail?.caseInfo?.typeName,
+          mediatorId: detail?.caseInfo?.mediatorId,
+          mediatorName: detail?.caseInfo?.mediatorName,
+        }}
+        initialData={editingRecord}
+        onSubmit={handleSubmitRecord}
+      />
 
       <Modal
         title="案例评分"

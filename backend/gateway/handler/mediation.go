@@ -36,6 +36,9 @@ type MediationRecordRequest struct {
 	NextStep         string   `json:"nextStep"`
 	Participants     []string `json:"participants"`
 	AssistMediators  []int64  `json:"assistMediators"`
+	IsDraft          int32    `json:"isDraft"`
+	TemplateID       int64    `json:"templateId"`
+	TemplateName     string   `json:"templateName"`
 }
 
 func CreateMediationRecord(ctx context.Context, c *app.RequestContext) {
@@ -85,6 +88,11 @@ func CreateMediationRecord(ctx context.Context, c *app.RequestContext) {
 		assistMediators = strings.Join(ids, ",")
 	}
 
+	isKeyRecord := int32(1)
+	if req.IsDraft == 1 {
+		isKeyRecord = 0
+	}
+
 	record := map[string]interface{}{
 		"id":                  recordID,
 		"case_id":             caseID,
@@ -103,7 +111,10 @@ func CreateMediationRecord(ctx context.Context, c *app.RequestContext) {
 		"result":              req.Result,
 		"next_step":           req.NextStep,
 		"assist_mediators":    assistMediators,
-		"is_key_record":       1,
+		"is_key_record":       isKeyRecord,
+		"is_draft":            req.IsDraft,
+		"template_id":         req.TemplateID,
+		"template_name":       req.TemplateName,
 	}
 
 	tx := database.GetDB().Begin()
@@ -113,7 +124,7 @@ func CreateMediationRecord(ctx context.Context, c *app.RequestContext) {
 		"last_progress_time": time.Now(),
 	}
 
-	if req.Result > 0 {
+	if req.IsDraft != 1 && req.Result > 0 {
 		progressUpdates["mediation_result"] = req.Result
 		if req.AgreementContent != "" {
 			progressUpdates["agreement_content"] = req.AgreementContent
@@ -125,12 +136,16 @@ func CreateMediationRecord(ctx context.Context, c *app.RequestContext) {
 	tx.Table("dispute_case").Where("id = ?", caseID).Updates(progressUpdates)
 
 	history := map[string]interface{}{
-		"case_id":       caseID,
-		"case_no":       caseData.CaseNo,
-		"operation_type": "MEDIATION_RECORD",
+		"case_id":          caseID,
+		"case_no":          caseData.CaseNo,
+		"operation_type":   "MEDIATION_RECORD",
 		"operation_detail": fmt.Sprintf("记录调解信息，时长: %d分钟，结果: %d", req.MediationDuration, req.Result),
-		"operator_id":   userInfo.UserID,
-		"operator_name": userInfo.RealName,
+		"operator_id":      userInfo.UserID,
+		"operator_name":    userInfo.RealName,
+	}
+	if req.IsDraft == 1 {
+		history["operation_type"] = "MEDIATION_RECORD_DRAFT"
+		history["operation_detail"] = fmt.Sprintf("保存调解记录草稿，时长: %d分钟", req.MediationDuration)
 	}
 	tx.Table("dispute_case_history").Create(history)
 
@@ -139,24 +154,27 @@ func CreateMediationRecord(ctx context.Context, c *app.RequestContext) {
 	cacheKey := fmt.Sprintf("%s%d", constants.RedisKeyPrefixCase, caseID)
 	cache.Del(ctx, cacheKey)
 
-	go func() {
-		msg := map[string]interface{}{
-			"caseId":    caseID,
-			"caseNo":    caseData.CaseNo,
-			"caseTitle": caseData.Title,
-			"recordId":  recordID,
-			"result":    req.Result,
-			"duration":  req.MediationDuration,
-			"mediator":  userInfo.RealName,
-		}
-		mq.SendMessage(constants.MQTopicAIProcess, msg)
-	}()
-
-	responseData := map[string]interface{}{
-		"id": recordID,
+	if req.IsDraft != 1 {
+		go func() {
+			msg := map[string]interface{}{
+				"caseId":    caseID,
+				"caseNo":    caseData.CaseNo,
+				"caseTitle": caseData.Title,
+				"recordId":  recordID,
+				"result":    req.Result,
+				"duration":  req.MediationDuration,
+				"mediator":  userInfo.RealName,
+			}
+			mq.SendMessage(constants.MQTopicAIProcess, msg)
+		}()
 	}
 
-	if req.Result == constants.MediationResultFail {
+	responseData := map[string]interface{}{
+		"id":      recordID,
+		"isDraft": req.IsDraft == 1,
+	}
+
+	if req.IsDraft != 1 && req.Result == constants.MediationResultFail {
 		var caseLocation struct {
 			Longitude float64 `gorm:"column:longitude"`
 			Latitude  float64 `gorm:"column:latitude"`
@@ -239,6 +257,11 @@ func GetMediationRecords(ctx context.Context, c *app.RequestContext) {
 			}
 			item["record_type_name"] = typeMap[int(recordType)]
 		}
+		if isDraft, ok := item["is_draft"]; ok {
+			if draft, ok := isDraft.(int32); ok {
+				item["is_draft"] = draft == 1
+			}
+		}
 	}
 
 	c.JSON(http.StatusOK, response.Success(list))
@@ -257,9 +280,11 @@ func UpdateMediationRecord(ctx context.Context, c *app.RequestContext) {
 
 	var record struct {
 		MediatorID int64 `gorm:"column:mediator_id"`
+		IsDraft    int32 `gorm:"column:is_draft"`
+		CaseNo     string `gorm:"column:case_no"`
 	}
 	database.GetDB().Table("dispute_mediation_record").
-		Select("mediator_id").
+		Select("mediator_id, is_draft, case_no").
 		Where("id = ?", recordID).
 		First(&record)
 
@@ -284,14 +309,88 @@ func UpdateMediationRecord(ctx context.Context, c *app.RequestContext) {
 		updates["participant_names"] = strings.Join(req.Participants, ",")
 	}
 
-	database.GetDB().Table("dispute_mediation_record").
+	wasDraft := record.IsDraft == 1
+	nowFormal := req.IsDraft != 1
+	operationDetail := ""
+
+	if wasDraft && nowFormal {
+		updates["is_draft"] = 0
+		updates["is_key_record"] = 1
+		operationDetail = fmt.Sprintf("草稿转正式记录，时长: %d分钟，结果: %d", req.MediationDuration, req.Result)
+	} else if wasDraft && req.IsDraft == 1 {
+		operationDetail = fmt.Sprintf("更新草稿记录，时长: %d分钟", req.MediationDuration)
+	} else {
+		operationDetail = fmt.Sprintf("更新调解记录，时长: %d分钟，结果: %d", req.MediationDuration, req.Result)
+	}
+
+	tx := database.GetDB().Begin()
+	tx.Table("dispute_mediation_record").
 		Where("id = ?", recordID).
 		Updates(updates)
+
+	if wasDraft && nowFormal {
+		progressUpdates := map[string]interface{}{
+			"last_progress_time": time.Now(),
+		}
+		if req.Result > 0 {
+			progressUpdates["mediation_result"] = req.Result
+			if req.AgreementContent != "" {
+				progressUpdates["agreement_content"] = req.AgreementContent
+			}
+			if req.Result == constants.MediationResultSuccess {
+				progressUpdates["mediation_end_time"] = time.Now()
+			}
+		}
+		tx.Table("dispute_case").Where("id = ?", caseID).Updates(progressUpdates)
+
+		go func() {
+			var caseData struct {
+				CaseNo  string `gorm:"column:case_no"`
+				Title   string `gorm:"column:title"`
+			}
+			database.GetDB().Table("dispute_case").
+				Select("case_no, title").
+				Where("id = ?", caseID).First(&caseData)
+
+			msg := map[string]interface{}{
+				"caseId":    caseID,
+				"caseNo":    caseData.CaseNo,
+				"caseTitle": caseData.Title,
+				"recordId":  recordID,
+				"result":    req.Result,
+				"duration":  req.MediationDuration,
+				"mediator":  userInfo.RealName,
+			}
+			mq.SendMessage(constants.MQTopicAIProcess, msg)
+		}()
+	}
+
+	historyType := "MEDIATION_RECORD_UPDATE"
+	if wasDraft && nowFormal {
+		historyType = "MEDIATION_RECORD_DRAFT_TO_FORMAL"
+	} else if wasDraft {
+		historyType = "MEDIATION_RECORD_DRAFT_UPDATE"
+	}
+	history := map[string]interface{}{
+		"case_id":          caseID,
+		"case_no":          record.CaseNo,
+		"operation_type":   historyType,
+		"operation_detail": operationDetail,
+		"operator_id":      userInfo.UserID,
+		"operator_name":    userInfo.RealName,
+	}
+	tx.Table("dispute_case_history").Create(history)
+
+	tx.Commit()
 
 	cacheKey := fmt.Sprintf("%s%d", constants.RedisKeyPrefixCase, caseID)
 	cache.Del(ctx, cacheKey)
 
-	c.JSON(http.StatusOK, response.SuccessWithMessage(nil, "调解记录更新成功"))
+	c.JSON(http.StatusOK, response.SuccessWithMessage(map[string]interface{}{
+		"isDraft": req.IsDraft == 1,
+		"wasDraft": wasDraft,
+		"nowFormal": nowFormal,
+	}, "调解记录更新成功"))
 }
 
 func GetAISummary(ctx context.Context, c *app.RequestContext) {
