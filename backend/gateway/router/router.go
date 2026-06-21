@@ -76,6 +76,7 @@ func RegisterRoutes(h *app.Hertz) {
 			dispute.POST("/:id/status", handler.UpdateDisputeStatus)
 			dispute.GET("/:id/history", handler.GetDisputeHistory)
 			dispute.GET("/:id/escalations", handler.GetCaseEscalationListHandler)
+			dispute.GET("/:id/transfers", handler.GetCaseTransferList)
 
 			dispute.GET("/mediators", handler.GetMediatorList)
 			dispute.GET("/mediators/:id/load", handler.GetMediatorLoad)
@@ -274,6 +275,33 @@ func RegisterRoutes(h *app.Hertz) {
 		urge := userAuth.Group("/urge")
 		{
 			urge.GET("/case/:caseId", handler.GetCaseUrgeListHandler)
+		}
+
+		transfer := userAuth.Group("/transfer")
+		{
+			transfer.GET("", handler.GetTransferList)
+			transfer.GET("/:id", handler.GetTransferDetail)
+			transfer.POST("", handler.CreateTransfer)
+			transfer.POST("/:id/receive", handler.ReceiveTransfer)
+			transfer.POST("/:id/reject", handler.RejectTransfer)
+			transfer.POST("/:id/process", handler.StartProcessTransfer)
+			transfer.POST("/:id/complete", handler.CompleteTransfer)
+			transfer.POST("/:id/urge", handler.UrgeTransfer)
+			transfer.POST("/:id/cancel", handler.CancelTransfer)
+			transfer.GET("/:transferId/urges", handler.GetTransferUrgeList)
+
+			transfer.GET("/stats/dept", handler.GetTransferDeptStats)
+			transfer.GET("/stats/duration-ranking", handler.GetTransferDurationRanking)
+			transfer.GET("/stats/trend", handler.GetTransferTrendStats)
+		}
+
+		transferTemplate := userAuth.Group("/transfer-template", middleware.AdminRequiredMiddleware())
+		{
+			transferTemplate.GET("", handler.GetTransferTemplateList)
+			transferTemplate.GET("/:id", handler.GetTransferTemplateDetail)
+			transferTemplate.POST("", handler.CreateTransferTemplate)
+			transferTemplate.PUT("/:id", handler.UpdateTransferTemplate)
+			transferTemplate.DELETE("/:id", handler.DeleteTransferTemplate)
 		}
 
 		ws := userAuth.Group("/ws")

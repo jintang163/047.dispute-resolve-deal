@@ -119,6 +119,11 @@ const (
 	MQTopicVideoQueue    = "dispute_video_queue"
 	MQTopicEsignNotify   = "dispute_esign_notify"
 	MQTopicBlockchainStore = "dispute_blockchain_store"
+	MQTopicTransferCreate  = "dispute_transfer_create"
+	MQTopicTransferReceive = "dispute_transfer_receive"
+	MQTopicTransferUrge    = "dispute_transfer_urge"
+	MQTopicTransferTimeout = "dispute_transfer_timeout"
+	MQTopicTransferComplete = "dispute_transfer_complete"
 
 	MQTagAll     = "*"
 	MQTagSms     = "sms"
@@ -174,6 +179,20 @@ const (
 	PerformancePeriodMonth    = 1
 	PerformancePeriodQuarter  = 2
 	PerformancePeriodYear     = 3
+
+	TransferStatusPending     = 10
+	TransferStatusReceived    = 20
+	TransferStatusProcessing  = 30
+	TransferStatusCompleted   = 40
+	TransferStatusRejected    = 50
+	TransferStatusCancelled   = 99
+
+	TransferUrgeTypeUser     = 1
+	TransferUrgeTypeLeader   = 2
+	TransferUrgeTypeSystem   = 3
+
+	TransferUrgeSourceSystem = 1
+	TransferUrgeSourceManual = 2
 )
 
 var CaseStatusMap = map[int]string{
@@ -228,3 +247,21 @@ var JudicialActionTypeMap = map[int]string{
 	90: "已履行",
 	99: "已失效",
 }
+
+var TransferStatusMap = map[int]string{
+	TransferStatusPending:    "待接收",
+	TransferStatusReceived:   "已接收",
+	TransferStatusProcessing: "处理中",
+	TransferStatusCompleted:  "已办结",
+	TransferStatusRejected:   "已驳回",
+	TransferStatusCancelled:  "已取消",
+}
+
+var TransferDeptTypeMap = map[string]string{
+	"HR": "人社局",
+	"MS": "市监局",
+	"PS": "公安局",
+	"CT": "法院",
+	"OT": "其他部门",
+}
+

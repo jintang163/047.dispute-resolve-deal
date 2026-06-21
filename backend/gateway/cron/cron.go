@@ -14,6 +14,7 @@ import (
 	"github.com/dispute-resolve/common/mq"
 	"github.com/dispute-resolve/common/model"
 	"github.com/dispute-resolve/common/trtc"
+	"github.com/dispute-resolve/gateway/handler"
 	"github.com/dispute-resolve/gateway/service"
 
 	"github.com/robfig/cron/v3"
@@ -38,6 +39,7 @@ const (
 	LockExpireSentiment = 600 * time.Second
 	LockExpireTimeoutUrge = 600 * time.Second
 	LockExpireTimeoutEscalate = 600 * time.Second
+	LockExpireTransferTimeout = 600 * time.Second
 )
 
 func StartCronTasks() {
@@ -67,6 +69,7 @@ func StartCronTasks() {
 		addCronTask("0 0 * * * ?", urgePendingTimeoutCasesTask, "urge_pending_timeout_cases")
 		addCronTask("0 0 * * * ?", urgeMediatingTimeoutCasesTask, "urge_mediating_timeout_cases")
 		addCronTask("0 30 * * * ?", escalateUrgedTimeoutCasesTask, "escalate_urged_timeout_cases")
+		addCronTask("0 0 */1 * * ?", transferTimeoutCheckTask, "transfer_timeout_check")
 
 		cronInstance.Start()
 		logger.Info("All cron tasks started", zap.Int("taskCount", len(entryIDs)))
@@ -1264,6 +1267,29 @@ func escalateUrgedTimeoutCasesTask() {
 	elapsed := time.Since(startTime)
 	logger.Info("Escalate urged timeout cases task completed",
 		zap.Int("escalatedCount", count),
+		zap.Duration("elapsed", elapsed),
+	)
+}
+
+func transferTimeoutCheckTask() {
+	ctx := context.Background()
+	lockKey := constants.RedisKeyPrefixLock + "cron:transfer_timeout"
+
+	locked, err := acquireLock(ctx, lockKey, LockExpireTransferTimeout)
+	if err != nil || !locked {
+		logger.Debug("Skip transfer timeout task, lock not acquired")
+		return
+	}
+	defer releaseLock(ctx, lockKey)
+
+	logger.Info("Starting transfer timeout check task")
+	startTime := time.Now()
+
+	count := handler.ProcessTransferTimeoutCheck()
+
+	elapsed := time.Since(startTime)
+	logger.Info("Transfer timeout check task completed",
+		zap.Int("timeoutCount", count),
 		zap.Duration("elapsed", elapsed),
 	)
 }
