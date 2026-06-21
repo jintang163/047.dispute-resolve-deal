@@ -17,6 +17,8 @@ import {
   PhoneOutlined,
   BarChartOutlined,
   ToolOutlined,
+  BookOutlined,
+  PlusOutlined,
 } from '@ant-design/icons';
 
 export interface MenuItem {
@@ -173,6 +175,25 @@ export const menuConfig: MenuItem[] = [
         label: '改进工单管理',
         icon: React.createElement(ToolOutlined),
         path: '/satisfaction/improvement',
+      },
+    ],
+  },
+  {
+    key: 'case-library',
+    label: '典型案例库',
+    icon: React.createElement(BookOutlined),
+    children: [
+      {
+        key: 'case-library-list',
+        label: '案例管理',
+        icon: React.createElement(FileTextOutlined),
+        path: '/case-library',
+      },
+      {
+        key: 'case-library-create',
+        label: '新增案例',
+        icon: React.createElement(PlusOutlined),
+        path: '/case-library/create',
       },
     ],
   },

@@ -208,6 +208,30 @@ const (
 	TransferUrgeTypeLeader   = 2
 	TransferUrgeTypeSystem   = 3
 
+	CaseLibraryStatusDisabled  = 0
+	CaseLibraryStatusActive    = 1
+	CaseLibraryStatusArchived  = 2
+
+	CaseLibraryVectorNotStart = 0
+	CaseLibraryVectorProcessing = 1
+	CaseLibraryVectorDone     = 2
+	CaseLibraryVectorFailed   = 3
+
+	CaseLibraryDifficultySimple  = 1
+	CaseLibraryDifficultyNormal  = 2
+	CaseLibraryDifficultyComplex = 3
+	CaseLibraryDifficultyHard    = 4
+
+	CaseLibraryQuoteTypeTactics  = 1
+	CaseLibraryQuoteTypeStrategy = 2
+	CaseLibraryQuoteTypeFull     = 3
+
+	CaseLibraryArchiveReasonUnused     = 1
+	CaseLibraryArchiveReasonManual     = 2
+	CaseLibraryArchiveReasonLowScore   = 3
+
+	CaseLibraryArchiveMonths = 12
+
 	TransferUrgeSourceSystem = 1
 	TransferUrgeSourceManual = 2
 )
@@ -280,6 +304,25 @@ var TransferDeptTypeMap = map[string]string{
 	"PS": "公安局",
 	"CT": "法院",
 	"OT": "其他部门",
+}
+
+var CaseLibraryStatusMap = map[int]string{
+	CaseLibraryStatusDisabled: "禁用",
+	CaseLibraryStatusActive:   "启用",
+	CaseLibraryStatusArchived: "已归档",
+}
+
+var CaseLibraryDifficultyMap = map[int]string{
+	CaseLibraryDifficultySimple:  "简单",
+	CaseLibraryDifficultyNormal:  "一般",
+	CaseLibraryDifficultyComplex: "复杂",
+	CaseLibraryDifficultyHard:    "疑难",
+}
+
+var CaseLibraryArchiveReasonMap = map[int]string{
+	CaseLibraryArchiveReasonUnused:   "超1年未使用",
+	CaseLibraryArchiveReasonManual:   "手动归档",
+	CaseLibraryArchiveReasonLowScore: "评分过低",
 }
 
 var EvidenceCategoryMap = map[int]string{

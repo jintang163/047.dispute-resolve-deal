@@ -40,6 +40,7 @@ const (
 	LockExpireTimeoutUrge = 600 * time.Second
 	LockExpireTimeoutEscalate = 600 * time.Second
 	LockExpireTransferTimeout = 600 * time.Second
+	LockExpireCaseArchive    = 600 * time.Second
 )
 
 func StartCronTasks() {
@@ -70,6 +71,7 @@ func StartCronTasks() {
 		addCronTask("0 0 * * * ?", urgeMediatingTimeoutCasesTask, "urge_mediating_timeout_cases")
 		addCronTask("0 30 * * * ?", escalateUrgedTimeoutCasesTask, "escalate_urged_timeout_cases")
 		addCronTask("0 0 */1 * * ?", transferTimeoutCheckTask, "transfer_timeout_check")
+		addCronTask("0 0 3 * * ?", caseLibraryArchiveTask, "case_library_archive")
 
 		cronInstance.Start()
 		logger.Info("All cron tasks started", zap.Int("taskCount", len(entryIDs)))
@@ -1290,6 +1292,38 @@ func transferTimeoutCheckTask() {
 	elapsed := time.Since(startTime)
 	logger.Info("Transfer timeout check task completed",
 		zap.Int("timeoutCount", count),
+		zap.Duration("elapsed", elapsed),
+	)
+}
+
+func caseLibraryArchiveTask() {
+	ctx := context.Background()
+	lockKey := constants.RedisKeyPrefixLock + "cron:case_library_archive"
+
+	locked, err := acquireLock(ctx, lockKey, LockExpireCaseArchive)
+	if err != nil || !locked {
+		logger.Debug("Skip case library archive task, lock not acquired")
+		return
+	}
+	defer releaseLock(ctx, lockKey)
+
+	logger.Info("Starting case library archive task")
+	startTime := time.Now()
+
+	caseLibraryService := service.CaseLibraryServiceInst()
+	if caseLibraryService == nil {
+		logger.Error("CaseLibraryService not initialized")
+		return
+	}
+
+	archivedCount, err := caseLibraryService.ArchiveUnusedCases(ctx)
+	if err != nil {
+		logger.Error("Archive unused cases failed", logger.Error(err))
+	}
+
+	elapsed := time.Since(startTime)
+	logger.Info("Case library archive task completed",
+		zap.Int("archivedCount", archivedCount),
 		zap.Duration("elapsed", elapsed),
 	)
 }

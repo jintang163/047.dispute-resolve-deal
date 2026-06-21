@@ -99,6 +99,11 @@ func InitServiceWithOptions(opts InitOptions) *InitResult {
 			logger.Warn("Milvus initialization failed, will use fallback search", logger.Error(err))
 		} else {
 			logger.Info("Milvus vector store initialized")
+			if err := vector.InitCaseCollection(); err != nil {
+				logger.Warn("Case collection initialization failed", logger.Error(err))
+			} else {
+				logger.Info("Case library vector collection initialized")
+			}
 		}
 	}
 

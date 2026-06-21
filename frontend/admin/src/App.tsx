@@ -25,6 +25,9 @@ import PublicVerify from './pages/ESign/Verify';
 import CallbackList from './pages/Callback/List';
 import SatisfactionAnalysis from './pages/Satisfaction/Analysis';
 import ImprovementList from './pages/Satisfaction/ImprovementList';
+import CaseLibraryList from './pages/CaseLibrary/List';
+import CaseLibraryDetail from './pages/CaseLibrary/Detail';
+import CaseLibraryCreate from './pages/CaseLibrary/Create';
 import { getToken } from './utils/auth';
 import { useUserStore } from './stores/user';
 
@@ -117,6 +120,11 @@ const App: React.FC = () => {
           <Route path="satisfaction">
             <Route index element={<SatisfactionAnalysis />} />
             <Route path="improvement" element={<ImprovementList />} />
+          </Route>
+          <Route path="case-library">
+            <Route index element={<CaseLibraryList />} />
+            <Route path="create" element={<CaseLibraryCreate />} />
+            <Route path=":id" element={<CaseLibraryDetail />} />
           </Route>
         </Route>
         <Route path="*" element={<Navigate to="/dashboard" replace />} />

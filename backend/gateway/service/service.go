@@ -17,6 +17,7 @@ var (
 	videoServiceInstance             VideoService
 	esignServiceInstance             ESignService
 	judicialConfirmationServiceInstance JudicialConfirmationService
+	caseLibraryServiceInstance       CaseLibraryService
 	once                             sync.Once
 )
 
@@ -33,6 +34,7 @@ func InitServices(
 	video VideoService,
 	esign ESignService,
 	judicialConfirmation JudicialConfirmationService,
+	caseLibrary CaseLibraryService,
 ) {
 	once.Do(func() {
 		userServiceInstance = user
@@ -47,6 +49,7 @@ func InitServices(
 		videoServiceInstance = video
 		esignServiceInstance = esign
 		judicialConfirmationServiceInstance = judicialConfirmation
+		caseLibraryServiceInstance = caseLibrary
 	})
 }
 
@@ -62,3 +65,4 @@ func DispatchServiceInst() DispatchService     { return dispatchServiceInstance 
 func VideoServiceInst() VideoService              { return videoServiceInstance }
 func ESignServiceInst() ESignService              { return esignServiceInstance }
 func JudicialConfirmationServiceInst() JudicialConfirmationService { return judicialConfirmationServiceInstance }
+func CaseLibraryServiceInst() CaseLibraryService  { return caseLibraryServiceInstance }

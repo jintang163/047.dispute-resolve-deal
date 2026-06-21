@@ -60,6 +60,8 @@ milvus:
   password: ""
   collection: "law_articles"
   dimension: 1536
+  case_collection: "case_library"
+  case_dimension: 1536
 
 flowable:
   base_url: "http://127.0.0.1:8080/flowable-task"

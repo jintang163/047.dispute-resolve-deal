@@ -272,6 +272,24 @@ func RegisterRoutes(h *app.Hertz) {
 			satisfaction.GET("/stats", handler.GetSatisfactionSentimentStatsHandler)
 		}
 
+		caseLibrary := userAuth.Group("/case-library")
+		{
+			caseLibrary.GET("", handler.GetCaseLibraryList)
+			caseLibrary.GET("/search", handler.SearchSimilarCases)
+			caseLibrary.GET("/archives", handler.GetCaseLibraryArchiveList)
+			caseLibrary.GET("/:id", handler.GetCaseLibraryDetail)
+			caseLibrary.POST("", handler.CreateCaseLibrary)
+			caseLibrary.PUT("/:id", handler.UpdateCaseLibrary)
+			caseLibrary.DELETE("/:id", handler.DeleteCaseLibrary)
+			caseLibrary.POST("/:id/score", handler.ScoreCaseLibrary)
+			caseLibrary.POST("/:id/quote", handler.QuoteCaseLibrary)
+			caseLibrary.GET("/quotes", handler.GetCaseQuoteList)
+			caseLibrary.POST("/:id/archive", handler.ArchiveCaseLibrary)
+			caseLibrary.POST("/:id/restore", handler.RestoreCaseLibrary)
+			caseLibrary.POST("/:id/vectorize", handler.VectorizeCaseLibrary)
+			caseLibrary.POST("/vectorize-all", handler.VectorizeAllCaseLibrary)
+		}
+
 		improvement := userAuth.Group("/improvement")
 		{
 			improvement.GET("", handler.GetImprovementOrderListHandler)

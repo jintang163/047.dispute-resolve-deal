@@ -51,6 +51,10 @@ func main() {
 		&model.DisputeTransfer{},
 		&model.DisputeTransferUrge{},
 		&model.DisputeEvidence{},
+		&model.CaseLibrary{},
+		&model.CaseLibraryScore{},
+		&model.CaseLibraryQuote{},
+		&model.CaseLibraryArchive{},
 	); err != nil {
 		logger.Error("Auto migrate tables failed", logger.Error(err))
 	}
@@ -82,6 +86,7 @@ func main() {
 	videoService := impl.NewVideoService()
 	esignService := impl.NewESignService()
 	judicialConfirmationService := impl.NewJudicialConfirmationService()
+	caseLibraryService := impl.NewCaseLibraryService()
 
 	service.InitServices(
 		userService,
@@ -96,6 +101,7 @@ func main() {
 		videoService,
 		esignService,
 		judicialConfirmationService,
+		caseLibraryService,
 	)
 
 	rpc.InitRPCClients()

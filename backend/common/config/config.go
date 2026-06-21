@@ -133,11 +133,13 @@ type DeepSeekConfig struct {
 }
 
 type MilvusConfig struct {
-	Address     string `mapstructure:"address"`
-	Username    string `mapstructure:"username"`
-	Password    string `mapstructure:"password"`
-	Collection  string `mapstructure:"collection"`
-	Dimension   int    `mapstructure:"dimension"`
+	Address        string `mapstructure:"address"`
+	Username       string `mapstructure:"username"`
+	Password       string `mapstructure:"password"`
+	Collection     string `mapstructure:"collection"`
+	Dimension      int    `mapstructure:"dimension"`
+	CaseCollection string `mapstructure:"case_collection"`
+	CaseDimension  int    `mapstructure:"case_dimension"`
 }
 
 type FlowableConfig struct {
