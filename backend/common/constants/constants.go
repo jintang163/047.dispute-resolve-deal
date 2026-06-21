@@ -234,6 +234,53 @@ const (
 
 	TransferUrgeSourceSystem = 1
 	TransferUrgeSourceManual = 2
+
+	LegalAidOrgTypeCenter      = 1
+	LegalAidOrgTypeLawFirm     = 2
+	LegalAidOrgTypeNotary      = 3
+	LegalAidOrgTypeForensic    = 4
+
+	LegalAidOrgLevelCity    = 1
+	LegalAidOrgLevelDistrict = 2
+	LegalAidOrgLevelStreet   = 3
+
+	LegalAidApplyStatusPending  = 10
+	LegalAidApplyStatusApproved = 20
+	LegalAidApplyStatusRejected = 30
+	LegalAidApplyStatusCanceled = 40
+
+	LegalAidIncomeLevelLowIncome  = 1
+	LegalAidIncomeLevelLow        = 2
+	LegalAidIncomeLevelNormal     = 3
+
+	LegalAidTransferStatusPending  = 10
+	LegalAidTransferStatusAccepted = 20
+	LegalAidTransferStatusRejected = 30
+	LegalAidTransferStatusClosed   = 40
+
+	LegalAidConsultTypeText   = 1
+	LegalAidConsultTypeVoice  = 2
+	LegalAidConsultTypeVideo  = 3
+
+	LegalAidConsultStatusPending   = 10
+	LegalAidConsultStatusOngoing   = 20
+	LegalAidConsultStatusCompleted = 30
+	LegalAidConsultStatusCanceled  = 40
+	LegalAidConsultStatusTimeout   = 50
+
+	LegalAidSenderTypeUser   = 1
+	LegalAidSenderTypeLawyer = 2
+
+	LegalAidMessageTypeText  = 1
+	LegalAidMessageTypeImage = 2
+	LegalAidMessageTypeVoice = 3
+	LegalAidMessageTypeVideo = 4
+	LegalAidMessageTypeFile  = 5
+
+	LegalAidFreeConsultDuration = 1800
+
+	RedisKeyPrefixLegalAid = "legalaid:"
+	MinIOPathLegalAid      = "legalaid"
 )
 
 var CaseStatusMap = map[int]string{
@@ -336,5 +383,52 @@ var EvidenceCategoryMap = map[int]string{
 	EvidenceCategoryInvoice:       "发票票据",
 	EvidenceCategoryCertificate:   "证件证明",
 	EvidenceCategoryOther:         "其他材料",
+}
+
+var LegalAidOrgTypeMap = map[int]string{
+	LegalAidOrgTypeCenter:   "法律援助中心",
+	LegalAidOrgTypeLawFirm:  "律师事务所",
+	LegalAidOrgTypeNotary:   "公证处",
+	LegalAidOrgTypeForensic: "司法鉴定所",
+}
+
+var LegalAidOrgLevelMap = map[int]string{
+	LegalAidOrgLevelCity:     "市级",
+	LegalAidOrgLevelDistrict: "区级",
+	LegalAidOrgLevelStreet:   "街道级",
+}
+
+var LegalAidApplyStatusMap = map[int]string{
+	LegalAidApplyStatusPending:  "待审核",
+	LegalAidApplyStatusApproved: "审核通过",
+	LegalAidApplyStatusRejected: "审核驳回",
+	LegalAidApplyStatusCanceled: "已撤销",
+}
+
+var LegalAidIncomeLevelMap = map[int]string{
+	LegalAidIncomeLevelLowIncome: "低保",
+	LegalAidIncomeLevelLow:       "低收入",
+	LegalAidIncomeLevelNormal:    "普通",
+}
+
+var LegalAidTransferStatusMap = map[int]string{
+	LegalAidTransferStatusPending:  "待受理",
+	LegalAidTransferStatusAccepted: "已受理",
+	LegalAidTransferStatusRejected: "已驳回",
+	LegalAidTransferStatusClosed:   "已办结",
+}
+
+var LegalAidConsultTypeMap = map[int]string{
+	LegalAidConsultTypeText:  "文字咨询",
+	LegalAidConsultTypeVoice: "语音咨询",
+	LegalAidConsultTypeVideo: "视频咨询",
+}
+
+var LegalAidConsultStatusMap = map[int]string{
+	LegalAidConsultStatusPending:   "待开始",
+	LegalAidConsultStatusOngoing:   "进行中",
+	LegalAidConsultStatusCompleted: "已完成",
+	LegalAidConsultStatusCanceled:  "已取消",
+	LegalAidConsultStatusTimeout:   "已超时",
 }
 

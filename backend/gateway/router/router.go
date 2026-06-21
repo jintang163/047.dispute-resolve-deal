@@ -332,6 +332,57 @@ func RegisterRoutes(h *app.Hertz) {
 			transfer.GET("/stats/trend", handler.GetTransferTrendStats)
 		}
 
+		legalAid := userAuth.Group("/legal-aid")
+		{
+			legalAidOrg := legalAid.Group("/org")
+			{
+				legalAidOrg.GET("", handler.GetLegalAidOrgList)
+				legalAidOrg.GET("/:id", handler.GetLegalAidOrgDetail)
+				legalAidOrg.POST("", handler.CreateLegalAidOrg)
+				legalAidOrg.PUT("/:id", handler.UpdateLegalAidOrg)
+				legalAidOrg.DELETE("/:id", handler.DeleteLegalAidOrg)
+			}
+
+			legalAidLawyer := legalAid.Group("/lawyer")
+			{
+				legalAidLawyer.GET("", handler.GetLegalAidLawyerList)
+				legalAidLawyer.GET("/:id", handler.GetLegalAidLawyerDetail)
+			}
+
+			legalAidApplication := legalAid.Group("/application")
+			{
+				legalAidApplication.GET("", handler.GetLegalAidApplyList)
+				legalAidApplication.GET("/:id", handler.GetLegalAidApplyDetail)
+				legalAidApplication.POST("", handler.ApplyLegalAid)
+				legalAidApplication.POST("/:id/audit", handler.AuditLegalAidApply)
+			}
+
+			legalAidTransfer := legalAid.Group("/transfer")
+			{
+				legalAidTransfer.GET("", handler.GetLegalAidTransferList)
+				legalAidTransfer.GET("/:id", handler.GetLegalAidTransferDetail)
+				legalAidTransfer.POST("", handler.CreateLegalAidTransfer)
+				legalAidTransfer.POST("/:id/accept", handler.AcceptLegalAidTransfer)
+				legalAidTransfer.POST("/:id/close", handler.CloseLegalAidTransfer)
+			}
+
+			legalAid.POST("/recommend", handler.RecommendLegalAidOrgs)
+
+			legalAidConsult := legalAid.Group("/consult")
+			{
+				legalAidConsult.GET("", handler.GetLegalAidConsultList)
+				legalAidConsult.GET("/:id", handler.GetLegalAidConsultDetail)
+				legalAidConsult.POST("", handler.CreateLegalAidConsult)
+				legalAidConsult.POST("/:id/start", handler.StartLegalAidConsult)
+				legalAidConsult.POST("/:id/end", handler.EndLegalAidConsult)
+				legalAidConsult.POST("/:id/rate", handler.RateLegalAidConsult)
+				legalAidConsult.GET("/:consultId/messages", handler.GetLegalAidConsultMessages)
+				legalAidConsult.POST("/message", handler.SendLegalAidConsultMessage)
+			}
+
+			legalAid.GET("/case/:caseId/records", handler.GetCaseLegalAidRecords)
+		}
+
 		transferTemplate := userAuth.Group("/transfer-template", middleware.AdminRequiredMiddleware())
 		{
 			transferTemplate.GET("", handler.GetTransferTemplateList)
