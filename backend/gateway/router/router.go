@@ -289,6 +289,7 @@ func RegisterRoutes(h *app.Hertz) {
 			transfer.POST("/:id/urge", handler.UrgeTransfer)
 			transfer.POST("/:id/cancel", handler.CancelTransfer)
 			transfer.GET("/:transferId/urges", handler.GetTransferUrgeList)
+			transfer.GET("/templates/available", handler.GetAvailableTransferTemplates)
 
 			transfer.GET("/stats/dept", handler.GetTransferDeptStats)
 			transfer.GET("/stats/duration-ranking", handler.GetTransferDurationRanking)

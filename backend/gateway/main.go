@@ -10,8 +10,10 @@ import (
 
 	"github.com/dispute-resolve/common/bootstrap"
 	"github.com/dispute-resolve/common/config"
+	"github.com/dispute-resolve/common/database"
 	"github.com/dispute-resolve/common/logger"
 	"github.com/dispute-resolve/common/mq"
+	"github.com/dispute-resolve/common/model"
 	"github.com/dispute-resolve/gateway/cron"
 	"github.com/dispute-resolve/gateway/router"
 	"github.com/dispute-resolve/gateway/rpc"
@@ -42,6 +44,15 @@ func main() {
 	defer initResult.Stop()
 
 	cfg := config.GlobalConfig
+
+	if err := database.AutoMigrate(
+		&model.TransferTemplate{},
+		&model.DisputeTransfer{},
+		&model.DisputeTransferUrge{},
+	); err != nil {
+		logger.Error("Auto migrate transfer tables failed", logger.Error(err))
+	}
+	logger.Info("Transfer tables auto migrated")
 
 	log := logger.GetLogger()
 	hlog.SetLogger(hertzzap.NewLogger(hertzzap.WithLogger(log)))

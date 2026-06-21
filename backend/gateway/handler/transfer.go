@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -19,6 +20,7 @@ import (
 	"github.com/dispute-resolve/gateway/middleware"
 
 	"github.com/cloudwego/hertz/pkg/app"
+	"go.uber.org/zap"
 )
 
 type TransferTemplateListRequest struct {
@@ -453,17 +455,37 @@ func CreateTransfer(ctx context.Context, c *app.RequestContext) {
 		return
 	}
 
+	var existingTransfer int64
+	database.GetDB().Table("dispute_transfer").
+		Where("case_id = ? AND status IN (?, ?) AND deleted_at IS NULL",
+			req.CaseID, constants.TransferStatusPending, constants.TransferStatusReceived).
+		Count(&existingTransfer)
+	if existingTransfer > 0 {
+		c.JSON(http.StatusBadRequest, response.BadRequest("该案件已有进行中的转办，请勿重复提交"))
+		return
+	}
+
+	var caseTypeData struct {
+		TypeID   int64  `gorm:"column:type_id"`
+		TypeName string `gorm:"column:type_name"`
+	}
+	database.GetDB().Table("dispute_case").
+		Select("type_id, type_name").
+		Where("id = ? AND deleted_at IS NULL", req.CaseID).
+		Scan(&caseTypeData)
+
 	var templateData struct {
-		ID            int64  `gorm:"column:id"`
-		DeptCode      string `gorm:"column:dept_code"`
-		DeptName      string `gorm:"column:dept_name"`
-		DeptType      string `gorm:"column:dept_type"`
-		ContactPerson string `gorm:"column:contact_person"`
-		ContactPhone  string `gorm:"column:contact_phone"`
+		ID              int64  `gorm:"column:id"`
+		DeptCode        string `gorm:"column:dept_code"`
+		DeptName        string `gorm:"column:dept_name"`
+		DeptType        string `gorm:"column:dept_type"`
+		ContactPerson   string `gorm:"column:contact_person"`
+		ContactPhone    string `gorm:"column:contact_phone"`
+		ApplicableTypes string `gorm:"column:applicable_types"`
 	}
 	if req.TemplateID > 0 {
 		database.GetDB().Table("dispute_transfer_template").
-			Select("id, dept_code, dept_name, dept_type, contact_person, contact_phone").
+			Select("id, dept_code, dept_name, dept_type, contact_person, contact_phone, applicable_types").
 			Where("id = ? AND status = 1 AND deleted_at IS NULL", req.TemplateID).
 			First(&templateData)
 		if templateData.DeptCode == "" {
@@ -472,11 +494,27 @@ func CreateTransfer(ctx context.Context, c *app.RequestContext) {
 		}
 	} else {
 		database.GetDB().Table("dispute_transfer_template").
-			Select("id, dept_code, dept_name, dept_type, contact_person, contact_phone").
+			Select("id, dept_code, dept_name, dept_type, contact_person, contact_phone, applicable_types").
 			Where("dept_code = ? AND status = 1 AND deleted_at IS NULL", req.ToDeptCode).
 			First(&templateData)
 		if templateData.DeptCode == "" {
 			c.JSON(http.StatusBadRequest, response.BadRequest("目标部门不存在或已禁用"))
+			return
+		}
+	}
+
+	if caseTypeData.TypeID > 0 && templateData.ApplicableTypes != "" {
+		applicableIDs := strings.Split(templateData.ApplicableTypes, ",")
+		isInScope := false
+		for _, idStr := range applicableIDs {
+			idStr = strings.TrimSpace(idStr)
+			if idStr == strconv.FormatInt(caseTypeData.TypeID, 10) {
+				isInScope = true
+				break
+			}
+		}
+		if isInScope {
+			c.JSON(http.StatusBadRequest, response.BadRequest(fmt.Sprintf("案件类型[%s]属于综治范围内可调解类型，建议继续调解处理，无需转办", caseTypeData.TypeName)))
 			return
 		}
 	}
@@ -1028,6 +1066,36 @@ func UrgeTransfer(ctx context.Context, c *app.RequestContext) {
 		mq.SendMessage(constants.MQTopicTransferUrge, msg)
 	}()
 
+	notifyTitle := fmt.Sprintf("【转办催办】%s催办转办案件", userInfo.RealName)
+	notifyContent := fmt.Sprintf("转办编号%s，案件%s（%s）转办至%s，催办内容：%s",
+		transferData.TransferNo, transferData.CaseNo, transferData.CaseTitle, transferData.ToDeptName, req.Content)
+	notifyParams, _ := json.Marshal(map[string]interface{}{
+		"transferNo":  transferData.TransferNo,
+		"caseNo":      transferData.CaseNo,
+		"caseTitle":   transferData.CaseTitle,
+		"toDeptName":  transferData.ToDeptName,
+		"urgeContent": req.Content,
+		"urgeBy":      userInfo.RealName,
+	})
+
+	notifyInsertSQL := `INSERT INTO notification_record (receiver_id, receiver_name, template_id, template_name, template_type, title, content, channel_type, send_status, params, case_id, case_no, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+	for _, ch := range []string{"站内信", "短信"} {
+		if err := database.GetDB().Exec(notifyInsertSQL,
+			transferData.CaseID, "",
+			5, "转办催办", 5,
+			notifyTitle, notifyContent,
+			ch, 1,
+			string(notifyParams),
+			transferData.CaseID, transferData.CaseNo,
+			now,
+		).Error; err != nil {
+			logger.Warn("Insert transfer urge notification record failed",
+				logger.Int64("transferId", id),
+				zap.String("channel", ch),
+				logger.Error(err))
+		}
+	}
+
 	logger.Info("Transfer urged",
 		logger.Int64("transferId", id),
 		logger.String("transferNo", transferData.TransferNo),
@@ -1313,30 +1381,28 @@ func ProcessTransferTimeoutCheck() int {
 	db := database.GetDB()
 
 	type TimeoutTransfer struct {
-		ID             int64  `gorm:"column:id"`
-		TransferNo     string `gorm:"column:transfer_no"`
-		CaseID         int64  `gorm:"column:case_id"`
-		CaseNo         string `gorm:"column:case_no"`
-		CaseTitle      string `gorm:"column:case_title"`
-		ToDeptCode     string `gorm:"column:to_dept_code"`
-		ToDeptName     string `gorm:"column:to_dept_name"`
-		ToContactPhone string `gorm:"column:to_contact_phone"`
-		FromDeptID     int64  `gorm:"column:from_dept_id"`
-		FromDeptName   string `gorm:"column:from_dept_name"`
-		FromUserID     int64  `gorm:"column:from_user_id"`
-		FromUserName   string `gorm:"column:from_user_name"`
-		TimeoutHours   int    `gorm:"column:timeout_hours"`
-		UrgeCount      int    `gorm:"column:urge_count"`
-		IsTimeout      int32  `gorm:"column:is_timeout"`
+		ID             int64     `gorm:"column:id"`
+		TransferNo     string    `gorm:"column:transfer_no"`
+		CaseID         int64     `gorm:"column:case_id"`
+		CaseNo         string    `gorm:"column:case_no"`
+		CaseTitle      string    `gorm:"column:case_title"`
+		ToDeptCode     string    `gorm:"column:to_dept_code"`
+		ToDeptName     string    `gorm:"column:to_dept_name"`
+		ToContactPhone string    `gorm:"column:to_contact_phone"`
+		FromDeptID     int64     `gorm:"column:from_dept_id"`
+		FromDeptName   string    `gorm:"column:from_dept_name"`
+		FromUserID     int64     `gorm:"column:from_user_id"`
+		FromUserName   string    `gorm:"column:from_user_name"`
+		TimeoutHours   int       `gorm:"column:timeout_hours"`
+		UrgeCount      int       `gorm:"column:urge_count"`
+		IsTimeout      int32     `gorm:"column:is_timeout"`
 		CreatedAt      time.Time `gorm:"column:created_at"`
-		Status         int32  `gorm:"column:status"`
 	}
 
 	var transfers []TimeoutTransfer
 	err := db.Table("dispute_transfer").
-		Select("id, transfer_no, case_id, case_no, case_title, to_dept_code, to_dept_name, to_contact_phone, from_dept_id, from_dept_name, from_user_id, from_user_name, timeout_hours, urge_count, is_timeout, created_at, status").
-		Where("status IN (?, ?) AND deleted_at IS NULL",
-			constants.TransferStatusPending, constants.TransferStatusReceived).
+		Select("id, transfer_no, case_id, case_no, case_title, to_dept_code, to_dept_name, to_contact_phone, from_dept_id, from_dept_name, from_user_id, from_user_name, timeout_hours, urge_count, is_timeout, created_at").
+		Where("status = ? AND deleted_at IS NULL", constants.TransferStatusPending).
 		Scan(&transfers).Error
 	if err != nil {
 		logger.Error("Query timeout transfers failed", logger.Error(err))
@@ -1394,6 +1460,41 @@ func ProcessTransferTimeoutCheck() int {
 					logger.Error(err))
 				continue
 			}
+
+			insertSQL := `INSERT INTO notification_record (receiver_id, receiver_name, template_id, template_name, template_type, title, content, channel_type, send_status, params, case_id, case_no, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+
+			title := fmt.Sprintf("【转办超时催办】%s转办案件超时未接收", t.ToDeptName)
+			content := fmt.Sprintf("转办编号%s，案件%s（%s）转办至%s已超时%d小时（限时%d小时），请尽快接收处理。",
+				t.TransferNo, t.CaseNo, t.CaseTitle, t.ToDeptName, overdueHours, t.TimeoutHours)
+			params := map[string]interface{}{
+				"transferNo":   t.TransferNo,
+				"caseNo":       t.CaseNo,
+				"caseTitle":    t.CaseTitle,
+				"toDeptName":   t.ToDeptName,
+				"overdueHours": overdueHours,
+				"timeoutHours": t.TimeoutHours,
+			}
+			paramsJSON, _ := json.Marshal(params)
+
+			channels := []string{"站内信", "短信"}
+			for _, ch := range channels {
+				if err := tx.Exec(insertSQL,
+					t.FromUserID,
+					t.FromUserName,
+					5, "转办超时催办", 5,
+					title, content,
+					ch, 1,
+					string(paramsJSON),
+					t.CaseID, t.CaseNo,
+					now,
+				).Error; err != nil {
+					logger.Warn("Insert transfer timeout notification record failed",
+						logger.Int64("transferId", t.ID),
+						zap.String("channel", ch),
+						logger.Error(err))
+				}
+			}
+
 			tx.Commit()
 
 			go func(t TimeoutTransfer, overdueHours int) {
@@ -1427,6 +1528,35 @@ func ProcessTransferTimeoutCheck() int {
 	}
 
 	return processedCount
+}
+
+func GetAvailableTransferTemplates(ctx context.Context, c *app.RequestContext) {
+	typeIDStr := c.Query("typeId")
+	deptType := c.Query("deptType")
+
+	db := database.GetDB().Table("dispute_transfer_template").
+		Select("id, template_name, dept_code, dept_name, dept_type, contact_person, contact_phone, description, applicable_types, sort_order").
+		Where("status = 1 AND deleted_at IS NULL")
+
+	if deptType != "" {
+		db = db.Where("dept_type = ?", deptType)
+	}
+
+	if typeIDStr != "" {
+		db = db.Where("FIND_IN_SET(?, applicable_types)", typeIDStr)
+	}
+
+	var list []map[string]interface{}
+	db.Order("sort_order ASC, id DESC").
+		Find(&list)
+
+	for _, item := range list {
+		if deptType, ok := item["dept_type"].(string); ok {
+			item["dept_type_name"] = constants.TransferDeptTypeMap[deptType]
+		}
+	}
+
+	c.JSON(http.StatusOK, response.Success(list))
 }
 
 func GetCaseTransferList(ctx context.Context, c *app.RequestContext) {
