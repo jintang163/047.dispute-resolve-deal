@@ -6,8 +6,11 @@ export interface IdCardInfo {
   gender: string
   nation: string
   birthDate: string
+  age: number | string
   address: string
   idNumber: string
+  phone: string
+  household: string
   issuer: string
   validPeriod: string
   photo?: string
@@ -57,8 +60,11 @@ export const useKioskStore = defineStore('kiosk', () => {
     gender: '',
     nation: '',
     birthDate: '',
+    age: '',
     address: '',
     idNumber: '',
+    phone: '',
+    household: '',
     issuer: '',
     validPeriod: ''
   })
@@ -91,8 +97,11 @@ export const useKioskStore = defineStore('kiosk', () => {
       gender: '',
       nation: '',
       birthDate: '',
+      age: '',
       address: '',
       idNumber: '',
+      phone: '',
+      household: '',
       issuer: '',
       validPeriod: ''
     }

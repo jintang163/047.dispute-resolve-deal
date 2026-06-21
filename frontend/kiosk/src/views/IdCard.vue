@@ -101,6 +101,19 @@
             </el-col>
           </el-row>
 
+          <el-row :gutter="32">
+            <el-col :span="12">
+              <el-form-item label="年龄" prop="age">
+                <el-input v-model="formData.age" placeholder="请输入年龄" disabled />
+              </el-form-item>
+            </el-col>
+            <el-col :span="12">
+              <el-form-item label="联系电话" prop="phone">
+                <el-input v-model="formData.phone" placeholder="请输入联系电话" maxlength="11" />
+              </el-form-item>
+            </el-col>
+          </el-row>
+
           <el-form-item label="身份证号" prop="idNumber">
             <div class="idcard-input-wrapper">
               <el-input
@@ -130,6 +143,10 @@
             <el-input v-model="formData.address" type="textarea" :rows="2" placeholder="请输入详细住址" />
           </el-form-item>
 
+          <el-form-item label="户籍所在地" prop="household">
+            <el-input v-model="formData.household" placeholder="请输入户籍所在地" />
+          </el-form-item>
+
           <el-row :gutter="32">
             <el-col :span="12">
               <el-form-item label="签发机关" prop="issuer">
@@ -154,7 +171,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onMounted, watch } from 'vue'
+import { ref, reactive, onMounted, onBeforeUnmount, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import StepIndicator from '@/components/StepIndicator.vue'
@@ -176,13 +193,18 @@ const formRef = ref()
 const querying = ref(false)
 const queryTip = ref<{ type: string; icon: string; message: string } | null>(null)
 
+const debounceTimer = ref<ReturnType<typeof setTimeout> | null>(null)
+
 const formData = reactive({
   name: store.idCardInfo.name,
   gender: store.idCardInfo.gender,
   nation: store.idCardInfo.nation,
   birthDate: store.idCardInfo.birthDate,
+  age: store.idCardInfo.age,
   address: store.idCardInfo.address,
   idNumber: store.idCardInfo.idNumber,
+  phone: store.idCardInfo.phone,
+  household: store.idCardInfo.household,
   issuer: store.idCardInfo.issuer,
   validPeriod: store.idCardInfo.validPeriod
 })
@@ -202,12 +224,32 @@ const formRules = {
       }
     }, trigger: 'blur' }
   ],
+  phone: [
+    { pattern: /^1[3-9]\d{9}$/, message: '请输入正确的手机号码', trigger: 'blur' }
+  ],
   address: [{ required: true, message: '请输入住址', trigger: 'blur' }]
 }
 
 watch(formData, (val) => {
   store.setIdCardInfo(val)
 }, { deep: true })
+
+watch(() => formData.idNumber, (val) => {
+  if (debounceTimer.value) {
+    clearTimeout(debounceTimer.value)
+  }
+  if (val && val.length === 18 && validateIdNumber(val) && !formData.name) {
+    debounceTimer.value = setTimeout(() => {
+      handleQueryPopulation()
+    }, 600)
+  }
+})
+
+onBeforeUnmount(() => {
+  if (debounceTimer.value) {
+    clearTimeout(debounceTimer.value)
+  }
+})
 
 async function handleQueryPopulation() {
   const idNumber = formData.idNumber
@@ -232,14 +274,19 @@ async function handleQueryPopulation() {
       if (!formData.gender) formData.gender = data.genderName || (data.gender === 1 ? '男' : '女')
       if (!formData.nation) formData.nation = data.nation
       if (!formData.birthDate) formData.birthDate = data.birthDate
+      if (!formData.age && data.age) formData.age = data.age
       if (!formData.address) formData.address = data.address
+      if (!formData.phone && data.phone) formData.phone = data.phone
+      if (!formData.household && data.household) formData.household = data.household
       if (!formData.issuer) formData.issuer = data.issuer
       if (!formData.validPeriod) formData.validPeriod = data.validPeriod
 
       store.setIdCardInfo(formData)
 
-      queryTip.value = { type: 'success', icon: '✓', message: '人口信息查询成功，已自动预填！' }
-      ElMessage({ message: '人口信息查询成功，已自动预填', type: 'success', duration: 3000 })
+      const prefilledCount = [data.name, data.genderName, data.nation, data.birthDate, data.age, data.address, data.phone, data.household, data.issuer, data.validPeriod].filter(v => v).length
+
+      queryTip.value = { type: 'success', icon: '✓', message: `人口信息查询成功，已自动预填 ${prefilledCount} 项信息！` }
+      ElMessage({ message: `人口信息查询成功，已自动预填${prefilledCount}项信息`, type: 'success', duration: 3000 })
       readSuccess.value = true
     } else {
       queryTip.value = { type: 'error', icon: '✗', message: '未查询到该身份证号的人口信息，请手动填写' }

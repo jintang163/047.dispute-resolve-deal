@@ -372,6 +372,6 @@ export const disputeService = {
   },
 
   queryPopulationByIDCard: (idCard: string) => {
-    return request.post<PopulationInfo>('/idcard/query', { idCard });
+    return request.post<PopulationInfo>('/v1/idcard/query', { idCard });
   },
 };

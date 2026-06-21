@@ -30,16 +30,17 @@ var timeout = 30 * time.Second
 
 func main() {
 	initResult := bootstrap.InitServiceWithOptions(bootstrap.InitOptions{
-		ConfigPath:     "./conf/config.yaml",
-		ServiceName:    "gateway",
-		EnableRedis:    true,
-		EnableFlowable: true,
-		EnableAI:       true,
-		EnableMilvus:   true,
-		EnableMinIO:    true,
-		EnableCourt:    true,
-		EnableTRTC:     true,
-		LogLevel:       "info",
+		ConfigPath:       "./conf/config.yaml",
+		ServiceName:      "gateway",
+		EnableRedis:      true,
+		EnableFlowable:   true,
+		EnableAI:         true,
+		EnableMilvus:     true,
+		EnableMinIO:      true,
+		EnableCourt:      true,
+		EnableTRTC:       true,
+		EnablePopulation: true,
+		LogLevel:         "info",
 	})
 	defer initResult.Stop()
 

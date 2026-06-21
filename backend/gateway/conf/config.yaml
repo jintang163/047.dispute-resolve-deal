@@ -110,3 +110,10 @@ spatial:
   cluster_radius_meters: 500.0
   use_geohash_prefix: 5
   use_spatial_index: true
+
+population:
+  api_endpoint: "http://127.0.0.1:9100"
+  app_id: "population-app-001"
+  app_secret: "population-secret-2024"
+  mock_mode: true
+  timeout: 30

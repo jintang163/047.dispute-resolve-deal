@@ -13,6 +13,7 @@ import (
 	"github.com/dispute-resolve/common/court"
 	"github.com/dispute-resolve/common/database"
 	"github.com/dispute-resolve/common/logger"
+	"github.com/dispute-resolve/common/population"
 	"github.com/dispute-resolve/common/trtc"
 	"github.com/dispute-resolve/common/utils"
 	"github.com/dispute-resolve/common/vector"
@@ -20,16 +21,17 @@ import (
 )
 
 type InitOptions struct {
-	ConfigPath     string
-	ServiceName    string
-	EnableRedis    bool
-	EnableFlowable bool
-	EnableAI       bool
-	EnableMilvus   bool
-	EnableMinIO    bool
-	EnableCourt    bool
-	EnableTRTC     bool
-	LogLevel       string
+	ConfigPath      string
+	ServiceName     string
+	EnableRedis     bool
+	EnableFlowable  bool
+	EnableAI        bool
+	EnableMilvus    bool
+	EnableMinIO     bool
+	EnableCourt     bool
+	EnableTRTC      bool
+	EnablePopulation bool
+	LogLevel        string
 }
 
 type InitResult struct {
@@ -115,6 +117,11 @@ func InitServiceWithOptions(opts InitOptions) *InitResult {
 		trtc.InitCloudRecordService()
 		trtc.InitVideoQueueService()
 		logger.Info("TRTC video mediation services initialized")
+	}
+
+	if opts.EnablePopulation {
+		population.InitPopulation()
+		logger.Info("Population database client initialized")
 	}
 
 	stop := setupGracefulShutdown(opts.ServiceName)

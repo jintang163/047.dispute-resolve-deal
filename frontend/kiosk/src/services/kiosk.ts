@@ -45,27 +45,27 @@ export interface PopulationInfo {
 
 export const kioskApi = {
   getDisputeTypes(): Promise<DisputeTypeNode[]> {
-    return get<DisputeTypeNode[]>('/dispute/types')
+    return get<DisputeTypeNode[]>('/v1/public/dispute/types')
   },
 
   verifyIdCard(idNumber: string, name: string): Promise<{ valid: boolean; message?: string }> {
-    return post('/idcard/verify', { idNumber, name })
+    return post('/v1/public/idcard/verify', { idNumber, name })
   },
 
   queryPopulationByIDCard(idCard: string): Promise<PopulationInfo> {
-    return post<PopulationInfo>('/idcard/query', { idCard })
+    return post<PopulationInfo>('/v1/public/idcard/query', { idCard })
   },
 
   submitCase(params: SubmitCaseParams): Promise<SubmitCaseResult> {
-    return post('/case/submit', params)
+    return post('/v1/public/case/submit', params)
   },
 
   uploadEvidence(file: File, onProgress?: (percent: number) => void): Promise<EvidenceItem> {
-    return upload<EvidenceItem>('/evidence/upload', file, onProgress)
+    return upload<EvidenceItem>('/v1/public/evidence/upload', file, onProgress)
   },
 
   getCaseByNumber(caseNumber: string): Promise<any> {
-    return get(`/case/detail/${caseNumber}`)
+    return get(`/v1/public/case/detail/${caseNumber}`)
   },
 
   sendAIMessage(
@@ -73,7 +73,7 @@ export const kioskApi = {
     conversationId?: string,
     context?: { disputeType?: string }
   ): Promise<{ conversationId: string; reply: string }> {
-    return post('/ai/chat', {
+    return post('/v1/public/ai/chat', {
       message,
       conversationId,
       context
@@ -81,13 +81,13 @@ export const kioskApi = {
   },
 
   getAIQuickQuestions(disputeType?: string): Promise<string[]> {
-    return get('/ai/quick-questions', {
+    return get('/v1/public/ai/quick-questions', {
       params: { disputeType }
     })
   },
 
   getReceiptData(caseNumber: string): Promise<any> {
-    return get(`/case/receipt/${caseNumber}`)
+    return get(`/v1/public/case/receipt/${caseNumber}`)
   }
 }
 

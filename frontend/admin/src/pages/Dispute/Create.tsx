@@ -61,6 +61,8 @@ const DisputeCreate: React.FC = () => {
   const [reporterQueryTip, setReporterQueryTip] = useState<{ type: 'success' | 'error' | 'info'; message: string } | null>(null);
   const [respondentQueryTip, setRespondentQueryTip] = useState<{ type: 'success' | 'error' | 'info'; message: string } | null>(null);
 
+  const idCardDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   useEffect(() => {
     disputeService
       .getTypes()
@@ -205,6 +207,32 @@ const DisputeCreate: React.FC = () => {
     }
   }, [message]);
 
+  const handleIDCardValueChange = useCallback((changedValues: Record<string, any>, allValues: Record<string, any>) => {
+    if (idCardDebounceRef.current) {
+      clearTimeout(idCardDebounceRef.current);
+    }
+
+    const idCardReg = /^[1-9]\d{5}(18|19|20)\d{2}(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])\d{3}[\dXx]$/;
+
+    if (changedValues.reporterIdCard) {
+      const idCard = changedValues.reporterIdCard;
+      if (idCard && idCard.length === 18 && idCardReg.test(idCard) && !allValues.reporterName) {
+        idCardDebounceRef.current = setTimeout(() => {
+          handleQueryIDCard('reporter');
+        }, 800);
+      }
+    }
+
+    if (changedValues.respondentIdCard) {
+      const idCard = changedValues.respondentIdCard;
+      if (idCard && idCard.length === 18 && idCardReg.test(idCard) && !allValues.respondentName) {
+        idCardDebounceRef.current = setTimeout(() => {
+          handleQueryIDCard('respondent');
+        }, 800);
+      }
+    }
+  }, [handleQueryIDCard]);
+
   const onFinish = async (values: any) => {
     try {
       setLoading(true);
@@ -251,6 +279,7 @@ const DisputeCreate: React.FC = () => {
         formRef={formRef}
         layout="vertical"
         onFinish={onFinish}
+        onValuesChange={handleIDCardValueChange}
         submitter={{
           render: (_, dom) => <FooterToolbar>{dom}</FooterToolbar>,
           searchConfig: { submitText: '提交案件' },
