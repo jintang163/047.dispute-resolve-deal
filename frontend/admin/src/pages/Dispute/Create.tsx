@@ -1,6 +1,6 @@
 import React, { useState, useRef, useCallback, useEffect, useMemo } from 'react';
-import { Card, Row, Col, App, Tag, Space, Tooltip, Spin, Cascader, Alert, DatePicker, Radio } from 'antd';
-import { SaveOutlined, ThunderboltOutlined, CloseOutlined, RobotOutlined } from '@ant-design/icons';
+import { Card, Row, Col, App, Tag, Space, Tooltip, Spin, Cascader, Alert, DatePicker, Radio, Button } from 'antd';
+import { SaveOutlined, ThunderboltOutlined, CloseOutlined, RobotOutlined, IdcardOutlined, ScanOutlined } from '@ant-design/icons';
 import {
   ProForm,
   ProFormText,
@@ -11,7 +11,7 @@ import {
   ProCard,
 } from '@ant-design/pro-components';
 import { useNavigate } from 'react-router-dom';
-import { disputeService, DisputeTypeNode, KeywordExtractResult } from '../../services/dispute';
+import { disputeService, DisputeTypeNode, KeywordExtractResult, PopulationInfo } from '../../services/dispute';
 import dayjs from 'dayjs';
 
 const keywordColorPalette = ['red', 'volcano', 'orange', 'gold', 'lime', 'green', 'cyan', 'blue', 'geekblue', 'magenta'];
@@ -55,6 +55,11 @@ const DisputeCreate: React.FC = () => {
   const [typeTree, setTypeTree] = useState<DisputeTypeNode[]>([]);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const formRef = useRef<any>();
+
+  const [reporterQuerying, setReporterQuerying] = useState(false);
+  const [respondentQuerying, setRespondentQuerying] = useState(false);
+  const [reporterQueryTip, setReporterQueryTip] = useState<{ type: 'success' | 'error' | 'info'; message: string } | null>(null);
+  const [respondentQueryTip, setRespondentQueryTip] = useState<{ type: 'success' | 'error' | 'info'; message: string } | null>(null);
 
   useEffect(() => {
     disputeService
@@ -130,6 +135,75 @@ const DisputeCreate: React.FC = () => {
   const removeKeyword = useCallback((kw: string) => {
     setExtractedKeywords(prev => prev.filter(k => k !== kw));
   }, []);
+
+  const handleQueryIDCard = useCallback(async (type: 'reporter' | 'respondent') => {
+    const values = formRef.current?.getFieldsValue?.();
+    const idCardField = type === 'reporter' ? 'reporterIdCard' : 'respondentIdCard';
+    const idCard = values?.[idCardField];
+
+    if (!idCard) {
+      message.warning('请先输入身份证号');
+      return;
+    }
+
+    const idCardReg = /^[1-9]\d{5}(18|19|20)\d{2}(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])\d{3}[\dXx]$/;
+    if (!idCardReg.test(idCard)) {
+      message.error('身份证号格式不正确，请输入18位有效身份证号');
+      return;
+    }
+
+    const setQuerying = type === 'reporter' ? setReporterQuerying : setRespondentQuerying;
+    const setTip = type === 'reporter' ? setReporterQueryTip : setRespondentQueryTip;
+
+    setQuerying(true);
+    setTip({ type: 'info', message: '正在查询人口库信息...' });
+
+    try {
+      const res = await disputeService.queryPopulationByIDCard(idCard);
+      const data: any = (res as any)?.data ?? (res as PopulationInfo);
+      const info = data as PopulationInfo;
+
+      if (info?.name) {
+        const prefix = type === 'reporter' ? 'reporter' : 'respondent';
+        const nameField = `${prefix}Name`;
+        const phoneField = `${prefix}Phone`;
+        const addressField = `${prefix}Address`;
+
+        const currentValues = formRef.current?.getFieldsValue?.();
+        const updates: Record<string, any> = {};
+
+        if (!currentValues?.[nameField]) {
+          updates[nameField] = info.name;
+        }
+        if (!currentValues?.[phoneField] && info.phone) {
+          updates[phoneField] = info.phone;
+        }
+        if (!currentValues?.[addressField] && info.address) {
+          updates[addressField] = info.address;
+        }
+
+        if (Object.keys(updates).length > 0) {
+          formRef.current?.setFieldsValue?.(updates);
+        }
+
+        const fieldsCount = Object.keys(updates).length;
+        setTip({
+          type: 'success',
+          message: `查询成功！已自动预填 ${fieldsCount} 项信息（姓名、电话、地址）`,
+        });
+        message.success(`人口库查询成功，已自动预填${fieldsCount}项信息`);
+      } else {
+        setTip({ type: 'error', message: '未找到该身份证号对应的人口信息' });
+        message.warning('未查询到人口信息，请手动填写');
+      }
+    } catch (error: any) {
+      setTip({ type: 'error', message: `查询失败：${error.message || '请稍后重试'}` });
+      message.error(error.message || '人口库查询失败');
+    } finally {
+      setQuerying(false);
+      setTimeout(() => setTip(null), 5000);
+    }
+  }, [message]);
 
   const onFinish = async (values: any) => {
     try {
@@ -403,7 +477,46 @@ const DisputeCreate: React.FC = () => {
               />
             </Col>
             <Col xs={24} md={12}>
-              <ProFormText label="身份证号" name="reporterIdCard" fieldProps={{ size: 'large' }} />
+              <ProForm.Item
+                label={
+                  <Space>
+                    身份证号
+                    <Tag color="blue" icon={<IdcardOutlined />}>
+                      智能预填
+                    </Tag>
+                  </Space>
+                }
+                name="reporterIdCard"
+                extra={
+                  reporterQueryTip && (
+                    <span style={{ color: reporterQueryTip.type === 'success' ? '#52c41a' : reporterQueryTip.type === 'error' ? '#ff4d4f' : '#1890ff' }}>
+                      {reporterQueryTip.type === 'success' ? '✓ ' : reporterQueryTip.type === 'error' ? '✗ ' : 'ⓘ '}
+                      {reporterQueryTip.message}
+                    </span>
+                  )
+                }
+              >
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <ProFormText
+                    name="reporterIdCard"
+                    noStyle
+                    fieldProps={{
+                      size: 'large',
+                      placeholder: '请输入18位身份证号，点击右侧按钮查询人口信息',
+                      maxLength: 18,
+                    }}
+                  />
+                  <Button
+                    type="primary"
+                    icon={reporterQuerying ? <Spin size="small" /> : <ScanOutlined />}
+                    onClick={() => handleQueryIDCard('reporter')}
+                    loading={reporterQuerying}
+                    style={{ whiteSpace: 'nowrap' }}
+                  >
+                    {reporterQuerying ? '查询中...' : '查询人口信息'}
+                  </Button>
+                </div>
+              </ProForm.Item>
             </Col>
             <Col xs={24} md={12}>
               <ProFormText label="联系地址" name="reporterAddress" fieldProps={{ size: 'large' }} />
@@ -430,6 +543,48 @@ const DisputeCreate: React.FC = () => {
                 fieldProps={{ size: 'large' }}
                 rules={[{ pattern: /^1[3-9]\d{9}$/, message: '请输入正确的手机号码' }]}
               />
+            </Col>
+            <Col xs={24} md={12}>
+              <ProForm.Item
+                label={
+                  <Space>
+                    身份证号
+                    <Tag color="blue" icon={<IdcardOutlined />}>
+                      智能预填
+                    </Tag>
+                  </Space>
+                }
+                name="respondentIdCard"
+                extra={
+                  respondentQueryTip && (
+                    <span style={{ color: respondentQueryTip.type === 'success' ? '#52c41a' : respondentQueryTip.type === 'error' ? '#ff4d4f' : '#1890ff' }}>
+                      {respondentQueryTip.type === 'success' ? '✓ ' : respondentQueryTip.type === 'error' ? '✗ ' : 'ⓘ '}
+                      {respondentQueryTip.message}
+                    </span>
+                  )
+                }
+              >
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <ProFormText
+                    name="respondentIdCard"
+                    noStyle
+                    fieldProps={{
+                      size: 'large',
+                      placeholder: '请输入18位身份证号，点击右侧按钮查询人口信息',
+                      maxLength: 18,
+                    }}
+                  />
+                  <Button
+                    type="primary"
+                    icon={respondentQuerying ? <Spin size="small" /> : <ScanOutlined />}
+                    onClick={() => handleQueryIDCard('respondent')}
+                    loading={respondentQuerying}
+                    style={{ whiteSpace: 'nowrap' }}
+                  >
+                    {respondentQuerying ? '查询中...' : '查询人口信息'}
+                  </Button>
+                </div>
+              </ProForm.Item>
             </Col>
             <Col xs={24} md={24}>
               <ProFormText label="联系地址" name="respondentAddress" fieldProps={{ size: 'large' }} />

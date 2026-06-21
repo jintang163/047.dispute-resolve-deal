@@ -102,7 +102,28 @@
           </el-row>
 
           <el-form-item label="身份证号" prop="idNumber">
-            <el-input v-model="formData.idNumber" placeholder="请输入18位身份证号" maxlength="18" />
+            <div class="idcard-input-wrapper">
+              <el-input
+                v-model="formData.idNumber"
+                placeholder="请输入18位身份证号"
+                maxlength="18"
+                size="large"
+                @blur="handleIDCardBlur"
+              />
+              <el-button
+                type="primary"
+                size="large"
+                :icon="querying ? 'Loading' : 'Search'"
+                :loading="querying"
+                @click="handleQueryPopulation"
+                class="query-btn"
+              >
+                {{ querying ? '查询中' : '人口信息查询' }}
+              </el-button>
+            </div>
+            <div v-if="queryTip" class="query-tip" :class="queryTip.type">
+              {{ queryTip.icon }} {{ queryTip.message }}
+            </div>
           </el-form-item>
 
           <el-form-item label="住址" prop="address">
@@ -140,6 +161,7 @@ import StepIndicator from '@/components/StepIndicator.vue'
 import TouchButton from '@/components/TouchButton.vue'
 import { useKioskStore } from '@/stores/kiosk'
 import { readIdCard, stopCardReading, validateIdNumber } from '@/utils/kiosk'
+import { kioskApi } from '@/services/kiosk'
 
 const router = useRouter()
 const store = useKioskStore()
@@ -150,6 +172,9 @@ const readError = ref(false)
 const errorMessage = ref('')
 const showManualForm = ref(false)
 const formRef = ref()
+
+const querying = ref(false)
+const queryTip = ref<{ type: string; icon: string; message: string } | null>(null)
 
 const formData = reactive({
   name: store.idCardInfo.name,
@@ -183,6 +208,61 @@ const formRules = {
 watch(formData, (val) => {
   store.setIdCardInfo(val)
 }, { deep: true })
+
+async function handleQueryPopulation() {
+  const idNumber = formData.idNumber
+  if (!idNumber) {
+    ElMessage({ message: '请先输入身份证号', type: 'warning', duration: 3000 })
+    return
+  }
+  if (!validateIdNumber(idNumber)) {
+    ElMessage({ message: '身份证号格式不正确', type: 'error', duration: 3000 })
+    return
+  }
+
+  querying.value = true
+  queryTip.value = { type: 'info', icon: 'ⓘ', message: '正在查询人口库信息，请稍候...' }
+
+  try {
+    const res = await kioskApi.queryPopulationByIDCard(idNumber)
+    const data: any = (res as any)?.data ?? res
+
+    if (data?.name) {
+      if (!formData.name) formData.name = data.name
+      if (!formData.gender) formData.gender = data.genderName || (data.gender === 1 ? '男' : '女')
+      if (!formData.nation) formData.nation = data.nation
+      if (!formData.birthDate) formData.birthDate = data.birthDate
+      if (!formData.address) formData.address = data.address
+      if (!formData.issuer) formData.issuer = data.issuer
+      if (!formData.validPeriod) formData.validPeriod = data.validPeriod
+
+      store.setIdCardInfo(formData)
+
+      queryTip.value = { type: 'success', icon: '✓', message: '人口信息查询成功，已自动预填！' }
+      ElMessage({ message: '人口信息查询成功，已自动预填', type: 'success', duration: 3000 })
+      readSuccess.value = true
+    } else {
+      queryTip.value = { type: 'error', icon: '✗', message: '未查询到该身份证号的人口信息，请手动填写' }
+      ElMessage({ message: '未查询到人口信息，请手动填写', type: 'warning', duration: 3000 })
+    }
+  } catch (error: any) {
+    queryTip.value = { type: 'error', icon: '✗', message: `查询失败：${error.message || '请稍后重试'}` }
+    ElMessage({ message: error.message || '人口库查询失败', type: 'error', duration: 3000 })
+  } finally {
+    querying.value = false
+    setTimeout(() => {
+      if (queryTip.value?.type === 'success') {
+        queryTip.value = null
+      }
+    }, 5000)
+  }
+}
+
+function handleIDCardBlur() {
+  if (formData.idNumber && validateIdNumber(formData.idNumber) && !formData.name) {
+    handleQueryPopulation()
+  }
+}
 
 async function handleReadCard() {
   if (isReading.value) return
@@ -398,5 +478,41 @@ onMounted(() => {
   align-items: center;
   padding-top: 32px;
   border-top: 2px solid rgba(29, 108, 255, 0.1);
+}
+
+.idcard-input-wrapper {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+
+  .query-btn {
+    min-width: 200px;
+    height: 52px;
+    font-size: 20px;
+    flex-shrink: 0;
+  }
+}
+
+.query-tip {
+  margin-top: 12px;
+  padding: 12px 16px;
+  border-radius: 8px;
+  font-size: 22px;
+  font-weight: 500;
+
+  &.info {
+    background: rgba(24, 144, 255, 0.1);
+    color: #1890ff;
+  }
+
+  &.success {
+    background: rgba(82, 196, 26, 0.1);
+    color: #52c41a;
+  }
+
+  &.error {
+    background: rgba(255, 77, 79, 0.1);
+    color: #ff4d4f;
+  }
 }
 </style>

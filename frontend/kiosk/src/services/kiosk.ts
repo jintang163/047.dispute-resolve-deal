@@ -27,6 +27,22 @@ export interface AIConversationMessage {
   timestamp: string
 }
 
+export interface PopulationInfo {
+  name: string
+  gender: number
+  genderName: string
+  age: number
+  nation: string
+  birthDate: string
+  idcard: string
+  address: string
+  phone: string
+  household: string
+  ethnicCode: string
+  issuer: string
+  validPeriod: string
+}
+
 export const kioskApi = {
   getDisputeTypes(): Promise<DisputeTypeNode[]> {
     return get<DisputeTypeNode[]>('/dispute/types')
@@ -34,6 +50,10 @@ export const kioskApi = {
 
   verifyIdCard(idNumber: string, name: string): Promise<{ valid: boolean; message?: string }> {
     return post('/idcard/verify', { idNumber, name })
+  },
+
+  queryPopulationByIDCard(idCard: string): Promise<PopulationInfo> {
+    return post<PopulationInfo>('/idcard/query', { idCard })
   },
 
   submitCase(params: SubmitCaseParams): Promise<SubmitCaseResult> {

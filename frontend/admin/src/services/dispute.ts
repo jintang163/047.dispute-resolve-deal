@@ -254,6 +254,22 @@ export interface HeatmapQueryParams {
   useSpatial?: boolean;
 }
 
+export interface PopulationInfo {
+  name: string;
+  gender: number;
+  genderName: string;
+  age: number;
+  nation: string;
+  birthDate: string;
+  idcard: string;
+  address: string;
+  phone: string;
+  household: string;
+  ethnicCode: string;
+  issuer: string;
+  validPeriod: string;
+}
+
 export const disputeService = {
   getList: (params?: DisputeListParams) => {
     return request.get<DisputeListResponse>('/dispute/list', { params });
@@ -353,5 +369,9 @@ export const disputeService = {
 
   getMediatorLoad: (mediatorId: string | number) => {
     return request.get<MediatorLoadInfo>(`/dispute/mediators/${mediatorId}/load`);
+  },
+
+  queryPopulationByIDCard: (idCard: string) => {
+    return request.post<PopulationInfo>('/idcard/query', { idCard });
   },
 };

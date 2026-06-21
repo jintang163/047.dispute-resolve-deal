@@ -56,10 +56,13 @@ func RegisterRoutes(h *app.Hertz) {
 		public.POST("/esign/fadada-callback", handler.FaDaDaCallback)
 		public.GET("/blockchain/verify/:certNo", handler.PublicVerifyEvidence)
 		public.POST("/callback/aliyun-voice", handler.AliyunVoiceCallback)
+		public.POST("/idcard/query", handler.QueryPopulationByIDCard)
 	}
 
 	userAuth := api.Group("", middleware.JWTAuthMiddleware())
 	{
+		userAuth.POST("/idcard/query", handler.QueryPopulationByIDCard)
+
 		user := userAuth.Group("/user")
 		{
 			user.GET("/info", handler.GetUserInfo)

@@ -23,6 +23,7 @@ type Config struct {
 	FaDaDa       FaDaDaConfig       `mapstructure:"fadada"`
 	Blockchain   BlockchainConfig   `mapstructure:"blockchain"`
 	AliyunVoice  AliyunVoiceConfig  `mapstructure:"aliyun-voice"`
+	Population   PopulationConfig   `mapstructure:"population"`
 	Services     ServicesConfig     `mapstructure:"services"`
 	ServicePorts ServicePortsConfig `mapstructure:"service-ports"`
 	Amap         AmapConfig         `mapstructure:"amap"`
@@ -209,6 +210,14 @@ type SpatialConfig struct {
 	ClusterRadiusMeters float64 `mapstructure:"cluster_radius_meters"`
 	UseGeohashPrefix   int     `mapstructure:"use_geohash_prefix"`
 	UseSpatialIndex    bool    `mapstructure:"use_spatial_index"`
+}
+
+type PopulationConfig struct {
+	APIEndpoint string `mapstructure:"api_endpoint"`
+	AppID       string `mapstructure:"app_id"`
+	AppSecret   string `mapstructure:"app_secret"`
+	MockMode    bool   `mapstructure:"mock_mode"`
+	Timeout     int    `mapstructure:"timeout"`
 }
 
 type AliyunVoiceConfig struct {
