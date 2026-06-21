@@ -134,9 +134,23 @@ func (s *CaseLibraryServiceImpl) ListCases(ctx context.Context, page, pageSize i
 	return cases, total, nil
 }
 
-func (s *CaseLibraryServiceImpl) SearchSimilarCases(ctx context.Context, query string, topK int) ([]*vector.CaseSearchResult, error) {
+func (s *CaseLibraryServiceImpl) SearchSimilarCases(ctx context.Context, query string, caseID int64, topK int) ([]*vector.CaseSearchResult, error) {
 	if topK <= 0 {
 		topK = 5
+	}
+
+	if query == "" && caseID > 0 {
+		var caseData model.DisputeCase
+		if err := database.GetDB().Where("id = ?", caseID).First(&caseData).Error; err == nil {
+			query = caseData.Title
+			if caseData.Description != "" {
+				query += "\n" + caseData.Description
+			}
+		}
+	}
+
+	if query == "" {
+		return nil, fmt.Errorf("查询内容不能为空")
 	}
 
 	embedding, err := vector.GetEmbedding(query)
@@ -235,17 +249,131 @@ func (s *CaseLibraryServiceImpl) QuoteCase(ctx context.Context, quote *model.Cas
 		}
 	}
 
-	err := database.GetDB().Create(quote).Error
-	if err != nil {
+	now := time.Now()
+
+	tx := database.GetDB().Begin()
+
+	if err := tx.Create(quote).Error; err != nil {
+		tx.Rollback()
 		return fmt.Errorf("创建引用记录失败: %w", err)
 	}
 
-	now := time.Now()
-	database.GetDB().Model(&model.CaseLibrary{}).Where("id = ?", quote.LibraryCaseID).Updates(map[string]interface{}{
+	if quote.SourceCaseID > 0 {
+		var caseData struct {
+			CaseNo       string `gorm:"column:case_no"`
+			MediatorID   int64  `gorm:"column:mediator_id"`
+			MediatorName string `gorm:"column:mediator_name"`
+		}
+		tx.Table("dispute_case").
+			Where("id = ?", quote.SourceCaseID).
+			First(&caseData)
+
+		quoteTypeMap := map[int32]string{
+			1: "调解话术",
+			2: "调解策略",
+			3: "全文引用",
+		}
+		quoteTypeName := quoteTypeMap[quote.QuoteType]
+		if quoteTypeName == "" {
+			quoteTypeName = "引用内容"
+		}
+
+		prefix := fmt.Sprintf("[引用案例库 #%s · %s]\n", caseLib.CaseNo, quoteTypeName)
+		processContent := prefix + quote.QuoteContent
+
+		var recordID int64
+		if quote.MediationRecordID > 0 {
+			var existingRecord struct {
+				ProcessContent string `gorm:"column:process_content"`
+			}
+			err := tx.Table("dispute_mediation_record").
+				Select("process_content").
+				Where("id = ? AND case_id = ?", quote.MediationRecordID, quote.SourceCaseID).
+				First(&existingRecord).Error
+			if err == nil {
+				merged := existingRecord.ProcessContent
+				if merged != "" {
+					merged += "\n\n" + processContent
+				} else {
+					merged = processContent
+				}
+				tx.Table("dispute_mediation_record").
+					Where("id = ?", quote.MediationRecordID).
+					Update("process_content", merged)
+				recordID = quote.MediationRecordID
+			}
+		}
+
+		if recordID == 0 {
+			var count int64
+			tx.Table("dispute_mediation_record").
+				Where("case_id = ?", quote.SourceCaseID).
+				Count(&count)
+
+			recordType := int32(1)
+			if count > 0 {
+				recordType = int32(2)
+			}
+
+			mediatorID := quote.UserID
+			mediatorName := quote.UserName
+			if caseData.MediatorID > 0 {
+				mediatorID = caseData.MediatorID
+				mediatorName = caseData.MediatorName
+			}
+
+			recordID = utils.GenerateID()
+			newRecord := map[string]interface{}{
+				"id":                 recordID,
+				"case_id":            quote.SourceCaseID,
+				"case_no":            caseData.CaseNo,
+				"record_type":        recordType,
+				"mediator_id":        mediatorID,
+				"mediator_name":      mediatorName,
+				"mediation_time":     now.Format("2006-01-02 15:04:05"),
+				"mediation_place":    "系统引用",
+				"mediation_duration": 0,
+				"process_content":    processContent,
+				"dispute_focus":      "",
+				"mediation_opinion":  "",
+				"agreement_content":  "",
+				"result":             0,
+				"next_step":          "",
+				"participant_names":  "",
+				"assist_mediators":   "",
+				"is_key_record":      0,
+			}
+			if err := tx.Table("dispute_mediation_record").Create(newRecord).Error; err != nil {
+				tx.Rollback()
+				logger.Warn("Create mediation record from quote failed", logger.Error(err))
+			} else {
+				quote.MediationRecordID = recordID
+
+				history := map[string]interface{}{
+					"case_id":          quote.SourceCaseID,
+					"case_no":          caseData.CaseNo,
+					"operation_type":   "CASE_QUOTE",
+					"operation_detail": fmt.Sprintf("引用典型案例 #%s「%s」-%s，已写入调解记录", caseLib.CaseNo, caseLib.Title, quoteTypeName),
+					"operator_id":      quote.UserID,
+					"operator_name":    quote.UserName,
+				}
+				tx.Table("dispute_case_history").Create(history)
+			}
+		} else {
+			quote.MediationRecordID = recordID
+			tx.Model(quote).Update("mediation_record_id", recordID)
+		}
+	}
+
+	if err := tx.Model(&caseLib).Updates(map[string]interface{}{
 		"reference_count": caseLib.ReferenceCount + 1,
 		"last_used_at":    now,
-	})
+	}).Error; err != nil {
+		tx.Rollback()
+		return fmt.Errorf("更新案例引用统计失败: %w", err)
+	}
 
+	tx.Commit()
 	return nil
 }
 

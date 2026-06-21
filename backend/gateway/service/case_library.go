@@ -13,7 +13,7 @@ type CaseLibraryService interface {
 	DeleteCase(ctx context.Context, id int64) error
 	GetCase(ctx context.Context, id int64) (*model.CaseLibrary, error)
 	ListCases(ctx context.Context, page, pageSize int, keyword, disputeType string, difficultyLevel, status int) ([]*model.CaseLibrary, int64, error)
-	SearchSimilarCases(ctx context.Context, query string, topK int) ([]*vector.CaseSearchResult, error)
+	SearchSimilarCases(ctx context.Context, query string, caseID int64, topK int) ([]*vector.CaseSearchResult, error)
 	ScoreCase(ctx context.Context, score *model.CaseLibraryScore) error
 	QuoteCase(ctx context.Context, quote *model.CaseLibraryQuote) error
 	GetQuoteList(ctx context.Context, sourceCaseID int64) ([]*model.CaseLibraryQuote, error)

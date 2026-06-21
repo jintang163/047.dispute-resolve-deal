@@ -275,7 +275,7 @@ func RegisterRoutes(h *app.Hertz) {
 		caseLibrary := userAuth.Group("/case-library")
 		{
 			caseLibrary.GET("", handler.GetCaseLibraryList)
-			caseLibrary.GET("/search", handler.SearchSimilarCases)
+			caseLibrary.POST("/search", handler.SearchSimilarCases)
 			caseLibrary.GET("/archives", handler.GetCaseLibraryArchiveList)
 			caseLibrary.GET("/:id", handler.GetCaseLibraryDetail)
 			caseLibrary.POST("", handler.CreateCaseLibrary)

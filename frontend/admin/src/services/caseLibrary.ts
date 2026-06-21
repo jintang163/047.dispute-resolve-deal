@@ -100,8 +100,8 @@ export const caseLibraryService = {
   delete: (id: number) =>
     request.delete(`/case-library/${id}`),
 
-  searchSimilar: (query: string, topK: number = 5) =>
-    request.post('/case-library/search', { query, topK }),
+  searchSimilar: (query?: string, topK: number = 5, caseId?: number) =>
+    request.post('/case-library/search', { query, topK, caseId }),
 
   score: (id: number, score: number, sourceCaseId?: number, comment?: string) =>
     request.post(`/case-library/${id}/score`, { score, sourceCaseId, comment }),

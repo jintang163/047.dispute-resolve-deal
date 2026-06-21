@@ -191,11 +191,17 @@ func DeleteCaseLibrary(ctx context.Context, c *app.RequestContext) {
 
 func SearchSimilarCases(ctx context.Context, c *app.RequestContext) {
 	var req struct {
-		Query string `json:"query" binding:"required"`
-		TopK  int    `json:"topK"`
+		Query  string `json:"query"`
+		CaseID int64  `json:"caseId"`
+		TopK   int    `json:"topK"`
 	}
 	if err := c.BindAndValidate(&req); err != nil {
 		c.JSON(http.StatusBadRequest, response.BadRequest(err.Error()))
+		return
+	}
+
+	if req.Query == "" && req.CaseID <= 0 {
+		c.JSON(http.StatusBadRequest, response.BadRequest("query或caseId参数不能同时为空"))
 		return
 	}
 
@@ -204,7 +210,7 @@ func SearchSimilarCases(ctx context.Context, c *app.RequestContext) {
 	}
 
 	svc := service.CaseLibraryServiceInst()
-	results, err := svc.SearchSimilarCases(ctx, req.Query, req.TopK)
+	results, err := svc.SearchSimilarCases(ctx, req.Query, req.CaseID, req.TopK)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, response.ServerError(err.Error()))
 		return
@@ -300,7 +306,8 @@ func QuoteCaseLibrary(ctx context.Context, c *app.RequestContext) {
 	}
 
 	c.JSON(http.StatusOK, response.SuccessWithMessage(map[string]interface{}{
-		"quoteContent": quote.QuoteContent,
+		"quoteContent":      quote.QuoteContent,
+		"mediationRecordId": quote.MediationRecordID,
 	}, "引用成功"))
 }
 

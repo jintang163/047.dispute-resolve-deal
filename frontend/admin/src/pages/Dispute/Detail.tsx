@@ -16,6 +16,8 @@ import {
   List,
   Avatar,
   Alert,
+  Rate,
+  Empty,
 } from 'antd';
 import {
   ArrowLeftOutlined,
@@ -29,10 +31,15 @@ import {
   UserOutlined,
   TeamOutlined,
   WarningOutlined,
+  BookOutlined,
+  CopyOutlined,
+  StarOutlined,
+  ReloadOutlined,
 } from '@ant-design/icons';
 import { useNavigate, useParams } from 'react-router-dom';
 import { ProDescriptions } from '@ant-design/pro-components';
 import { disputeService, DisputeDetail, MediatorOption } from '../../services/dispute';
+import { caseLibraryService, CaseSearchResult } from '../../services/caseLibrary';
 import ProtocolGenerator from '../Mediation/ProtocolGenerator';
 import dayjs from 'dayjs';
 
@@ -112,11 +119,66 @@ const DisputeDetail: React.FC = () => {
   const [selectedMediator, setSelectedMediator] = useState<MediatorOption | null>(null);
   const [assigning, setAssigning] = useState(false);
 
+  const [similarCases, setSimilarCases] = useState<CaseSearchResult[]>([]);
+  const [similarCasesLoading, setSimilarCasesLoading] = useState(false);
+  const [scoreModalOpen, setScoreModalOpen] = useState(false);
+  const [scoreCaseId, setScoreCaseId] = useState<number>(0);
+  const [scoreValue, setScoreValue] = useState(3);
+
   useEffect(() => {
     if (id) {
       fetchDetail();
+      fetchSimilarCases();
     }
   }, [id]);
+
+  const fetchSimilarCases = async () => {
+    if (!id) return;
+    setSimilarCasesLoading(true);
+    try {
+      const res = await caseLibraryService.searchSimilar(undefined, 5, Number(id));
+      setSimilarCases(res.data?.data || []);
+    } catch (error: any) {
+      message.warning(error.message || '相似案例检索失败');
+    } finally {
+      setSimilarCasesLoading(false);
+    }
+  };
+
+  const handleQuote = async (record: CaseSearchResult, quoteType: number) => {
+    if (!id) return;
+    modal.confirm({
+      title: '引用案例',
+      content: `确认引用「${record.title}」的${quoteType === 1 ? '话术' : quoteType === 2 ? '策略' : '全文'}到当前案件的调解记录？`,
+      onOk: async () => {
+        try {
+          const res = await caseLibraryService.quote(record.caseId || record.id, Number(id), quoteType);
+          const quoteContent = res.data?.data?.quoteContent || '';
+          const mediationRecordId = res.data?.data?.mediationRecordId;
+          if (quoteContent) {
+            await navigator.clipboard.writeText(quoteContent);
+            message.success(
+              `引用成功，已写入调解记录${mediationRecordId ? '（记录ID：' + mediationRecordId + '）' : ''}，同时已复制到剪贴板`,
+            );
+          } else {
+            message.success('引用成功');
+          }
+        } catch (error: any) {
+          message.error(error.message || '引用失败');
+        }
+      },
+    });
+  };
+
+  const handleScore = async () => {
+    try {
+      await caseLibraryService.score(scoreCaseId, scoreValue, Number(id));
+      message.success('评分成功，感谢您的反馈');
+      setScoreModalOpen(false);
+    } catch {
+      message.error('评分失败');
+    }
+  };
 
   const fetchDetail = async () => {
     try {
@@ -331,6 +393,154 @@ const DisputeDetail: React.FC = () => {
             </Card>
           </Col>
         </Row>
+
+        <Card
+          bordered={false}
+          style={{ borderRadius: 8 }}
+          title={
+            <Space>
+              <BookOutlined style={{ color: '#1677ff' }} />
+              <span>相似案例推荐</span>
+              <Tag color="blue" style={{ marginLeft: 8 }}>
+                基于案件描述 AI 语义检索
+              </Tag>
+            </Space>
+          }
+          extra={
+            <Button
+              type="text"
+              icon={<ReloadOutlined />}
+              loading={similarCasesLoading}
+              onClick={fetchSimilarCases}
+            >
+              重新检索
+            </Button>
+          }
+        >
+          <Spin spinning={similarCasesLoading}>
+            {similarCases.length > 0 ? (
+              <Row gutter={[12, 12]}>
+                {similarCases.map((item, idx) => (
+                  <Col span={12} key={item.caseId || item.id || idx}>
+                    <Card
+                      size="small"
+                      style={{ height: '100%' }}
+                      title={
+                        <Space>
+                          <Tag color="blue">#{idx + 1}</Tag>
+                          <span
+                            style={{
+                              maxWidth: 180,
+                              overflow: 'hidden',
+                              textOverflow: 'ellipsis',
+                              whiteSpace: 'nowrap',
+                              display: 'inline-block',
+                            }}
+                          >
+                            {item.title}
+                          </span>
+                          <Tag color="green">相似度 {(item.score * 100).toFixed(1)}%</Tag>
+                          {item.difficultyLevel && (
+                            <Tag color={['', 'green', 'blue', 'orange', 'red'][item.difficultyLevel] || 'default'}>
+                              {['', '简单', '一般', '复杂', '疑难'][item.difficultyLevel] || ''}
+                            </Tag>
+                          )}
+                        </Space>
+                      }
+                      extra={
+                        <Button
+                          type="link"
+                          size="small"
+                          icon={<StarOutlined />}
+                          onClick={() => {
+                            setScoreCaseId(item.caseId || item.id);
+                            setScoreValue(3);
+                            setScoreModalOpen(true);
+                          }}
+                        >
+                          评分
+                        </Button>
+                      }
+                    >
+                      {item.disputeType && (
+                        <div style={{ fontSize: 12, color: '#666', marginBottom: 6 }}>
+                          纠纷类型：{item.disputeType}
+                        </div>
+                      )}
+                      {item.mediationTactics && (
+                        <div style={{ marginBottom: 6 }}>
+                          <div style={{ fontSize: 12, color: '#888', marginBottom: 2 }}>调解话术：</div>
+                          <div
+                            style={{
+                              fontSize: 13,
+                              maxHeight: 52,
+                              overflow: 'hidden',
+                              lineHeight: 1.4,
+                              color: '#333',
+                            }}
+                          >
+                            {item.mediationTactics}
+                          </div>
+                        </div>
+                      )}
+                      {item.keyPoints && (
+                        <div style={{ marginBottom: 8 }}>
+                          <div style={{ fontSize: 12, color: '#888', marginBottom: 2 }}>调解要点：</div>
+                          <div
+                            style={{
+                              fontSize: 13,
+                              maxHeight: 40,
+                              overflow: 'hidden',
+                              lineHeight: 1.4,
+                              color: '#333',
+                            }}
+                          >
+                            {item.keyPoints}
+                          </div>
+                        </div>
+                      )}
+                      <Space wrap style={{ marginTop: 4 }}>
+                        <Button
+                          size="small"
+                          icon={<CopyOutlined />}
+                          onClick={() => handleQuote(item, 1)}
+                        >
+                          引用话术
+                        </Button>
+                        <Button
+                          size="small"
+                          icon={<CopyOutlined />}
+                          onClick={() => handleQuote(item, 2)}
+                        >
+                          引用策略
+                        </Button>
+                        <Button
+                          size="small"
+                          type="primary"
+                          icon={<FileTextOutlined />}
+                          onClick={() => handleQuote(item, 3)}
+                        >
+                          全文引用
+                        </Button>
+                        <Button
+                          type="link"
+                          size="small"
+                          onClick={() => navigate(`/case-library/${item.caseId || item.id}`)}
+                        >
+                          查看详情
+                        </Button>
+                      </Space>
+                    </Card>
+                  </Col>
+                ))}
+              </Row>
+            ) : (
+              !similarCasesLoading && (
+                <Empty description="暂无相似案例，可尝试录入更多典型案例或点击重新检索" />
+              )
+            )}
+          </Spin>
+        </Card>
       </Space>
 
       <Drawer
@@ -460,6 +670,21 @@ const DisputeDetail: React.FC = () => {
             }}
           />
         </Spin>
+      </Modal>
+
+      <Modal
+        title="案例评分"
+        open={scoreModalOpen}
+        onCancel={() => setScoreModalOpen(false)}
+        onOk={handleScore}
+        okText="提交评分"
+        destroyOnClose
+      >
+        <Space direction="vertical" style={{ width: '100%' }}>
+          <div>请对该推荐案例的有用性进行评分：</div>
+          <Rate value={scoreValue} onChange={setScoreValue} />
+          <div style={{ color: '#999' }}>{scoreValue} 分</div>
+        </Space>
       </Modal>
     </Spin>
   );
