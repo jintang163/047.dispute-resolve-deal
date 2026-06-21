@@ -14,6 +14,7 @@ import (
 	"github.com/dispute-resolve/common/constants"
 	"github.com/dispute-resolve/common/database"
 	"github.com/dispute-resolve/common/logger"
+	"github.com/dispute-resolve/gateway/handler"
 
 	"github.com/apache/rocketmq-client-go/v2"
 	"github.com/apache/rocketmq-client-go/v2/consumer"
@@ -188,6 +189,7 @@ func StartConsumers() {
 		go startJudicialRemindConsumer(cfg)
 		go startEsignNotifyConsumer(cfg)
 		go startBlockchainStoreConsumer(cfg)
+		go startEvidenceClassifyConsumer(cfg)
 
 		go monitorShutdownSignal()
 
@@ -1757,4 +1759,66 @@ func processBlockchainStoreNotification(msg *BlockchainStoreMessage) {
 		zap.Int64("caseId", msg.CaseID),
 		zap.String("certNo", msg.CertNo),
 	)
+}
+
+func startEvidenceClassifyConsumer(cfg *config.Config) {
+	consumerWg.Add(1)
+	defer consumerWg.Done()
+
+	groupName := cfg.RocketMQ.GroupName + "_evidence_classify"
+	cons := InitConsumer(cfg, groupName)
+	consumers = append(consumers, cons)
+
+	topic := constants.MQTopicEvidenceClassify
+
+	err := cons.Subscribe(topic, consumer.MessageSelector{
+		Type:       consumer.TAG,
+		Expression: "*",
+	}, func(ctx context.Context, msgs ...*primitive.MessageExt) (consumer.ConsumeResult, error) {
+		for _, msg := range msgs {
+			select {
+			case <-shutdownSignal:
+				return consumer.ConsumeRetryLater, nil
+			default:
+			}
+
+			var classifyMsg map[string]interface{}
+			if err := json.Unmarshal(msg.Body, &classifyMsg); err != nil {
+				logger.Error("Unmarshal evidence classify message failed",
+					logger.Error(err),
+					zap.String("msgId", msg.MsgId),
+				)
+				continue
+			}
+
+			logger.Info("Received evidence classify message",
+				zap.String("msgId", msg.MsgId),
+				zap.Any("evidenceId", classifyMsg["evidenceId"]),
+			)
+
+			handler.HandleEvidenceClassifyMQ(ctx, classifyMsg)
+		}
+		return consumer.ConsumeSuccess, nil
+	})
+
+	if err != nil {
+		logger.Error("Subscribe evidence classify topic failed", logger.Error(err))
+		return
+	}
+
+	if err := cons.Start(); err != nil {
+		logger.Error("Start evidence classify consumer failed", logger.Error(err))
+		return
+	}
+
+	logger.Info("Evidence classify consumer started", zap.String("topic", topic), zap.String("group", groupName))
+
+	for {
+		select {
+		case <-shutdownSignal:
+			logger.Info("Evidence classify consumer stopping")
+			return
+		case <-time.After(1 * time.Second):
+		}
+	}
 }

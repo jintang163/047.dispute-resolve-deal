@@ -49,10 +49,11 @@ func main() {
 		&model.TransferTemplate{},
 		&model.DisputeTransfer{},
 		&model.DisputeTransferUrge{},
+		&model.DisputeEvidence{},
 	); err != nil {
-		logger.Error("Auto migrate transfer tables failed", logger.Error(err))
+		logger.Error("Auto migrate tables failed", logger.Error(err))
 	}
-	logger.Info("Transfer tables auto migrated")
+	logger.Info("Tables auto migrated")
 
 	log := logger.GetLogger()
 	hlog.SetLogger(hertzzap.NewLogger(hertzzap.WithLogger(log)))

@@ -88,6 +88,7 @@ func RegisterRoutes(h *app.Hertz) {
 				evidence.DELETE("/:evidenceId", handler.DeleteEvidence)
 				evidence.POST("/batch-delete", handler.BatchDeleteEvidence)
 				evidence.PUT("/:evidenceId/remark", handler.UpdateEvidenceRemark)
+				evidence.PUT("/:evidenceId/category", handler.UpdateEvidenceCategory)
 			}
 
 			mediation := dispute.Group("/:id/mediation")

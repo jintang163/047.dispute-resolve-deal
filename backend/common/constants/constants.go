@@ -62,6 +62,22 @@ const (
 	FileTypeDocument = 4
 	FileTypeOther    = 5
 
+	EvidenceCategoryUncategorized = 0
+	EvidenceCategoryIDCard        = 1
+	EvidenceCategoryContract      = 2
+	EvidenceCategoryReceipt       = 3
+	EvidenceCategoryPhoto         = 4
+	EvidenceCategoryChatRecord    = 5
+	EvidenceCategoryMedia         = 6
+	EvidenceCategoryInvoice       = 7
+	EvidenceCategoryCertificate   = 8
+	EvidenceCategoryOther         = 9
+
+	AIEvidenceProcessNotStart = 0
+	AIEvidenceProcessing     = 1
+	AIEvidenceProcessDone    = 2
+	AIEvidenceProcessFailed  = 3
+
 	VideoStatusNotStarted = 10
 	VideoStatusRunning    = 20
 	VideoStatusEnded      = 30
@@ -124,6 +140,7 @@ const (
 	MQTopicTransferUrge    = "dispute_transfer_urge"
 	MQTopicTransferTimeout = "dispute_transfer_timeout"
 	MQTopicTransferComplete = "dispute_transfer_complete"
+	MQTopicEvidenceClassify = "dispute_evidence_classify"
 
 	MQTagAll     = "*"
 	MQTagSms     = "sms"
@@ -263,5 +280,18 @@ var TransferDeptTypeMap = map[string]string{
 	"PS": "公安局",
 	"CT": "法院",
 	"OT": "其他部门",
+}
+
+var EvidenceCategoryMap = map[int]string{
+	EvidenceCategoryUncategorized: "未分类",
+	EvidenceCategoryIDCard:        "身份证件",
+	EvidenceCategoryContract:      "合同协议",
+	EvidenceCategoryReceipt:       "收据凭证",
+	EvidenceCategoryPhoto:         "现场照片",
+	EvidenceCategoryChatRecord:    "聊天记录",
+	EvidenceCategoryMedia:         "录音录像",
+	EvidenceCategoryInvoice:       "发票票据",
+	EvidenceCategoryCertificate:   "证件证明",
+	EvidenceCategoryOther:         "其他材料",
 }
 
