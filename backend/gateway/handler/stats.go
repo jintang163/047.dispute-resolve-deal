@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"net/http"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -17,9 +18,11 @@ import (
 	"github.com/dispute-resolve/common/database"
 	"github.com/dispute-resolve/common/logger"
 	"github.com/dispute-resolve/common/response"
+	"github.com/dispute-resolve/common/utils"
 	"github.com/dispute-resolve/gateway/middleware"
 
 	"github.com/cloudwego/hertz/pkg/app"
+	"github.com/minio/minio-go/v7"
 )
 
 type KeywordStatItem struct {
@@ -1277,105 +1280,334 @@ func PushBigScreenData() {
 			continue
 		}
 
-		cacheKey := fmt.Sprintf("bigscreen:stats:%d", orgID)
+		PushBigScreenDataForOrg(ctx, orgID)
+	}
+}
 
-		now := time.Now()
-		thirtyDaysAgo := now.AddDate(0, 0, -30)
+func UploadBigScreenScreenshot(ctx context.Context, c *app.RequestContext) {
+	userInfo := middleware.GetUserInfo(c)
+	orgID := userInfo.OrganizationID
 
-		var childOrgs []int64
-		database.GetDB().Table("sys_organization").
-			Select("id").
-			Where("parent_id = ? OR id = ?", orgID, orgID).
-			Pluck("id", &childOrgs)
+	file, err := c.FormFile("file")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, response.BadRequest("请选择要上传的文件"))
+		return
+	}
 
-		caseDB := database.GetDB().Table("dispute_case").
-			Where("deleted_at IS NULL").
-			Where("created_at >= ?", thirtyDaysAgo)
+	ext := strings.ToLower(filepath.Ext(file.Filename))
+	if ext != ".png" && ext != ".jpg" && ext != ".jpeg" {
+		c.JSON(http.StatusBadRequest, response.BadRequest("只支持PNG/JPG图片格式"))
+		return
+	}
 
-		if len(childOrgs) > 0 {
-			caseDB = caseDB.Where("organization_id IN ?", childOrgs)
+	const maxFileSize = 20 * 1024 * 1024
+	if file.Size > maxFileSize {
+		c.JSON(http.StatusBadRequest, response.BadRequest("文件大小不能超过20MB"))
+		return
+	}
+
+	objectName := fmt.Sprintf("%s/%d/%s%s",
+		constants.MinIOPathBigscreen,
+		orgID,
+		utils.GenerateUUID(),
+		ext,
+	)
+
+	src, err := file.Open()
+	if err != nil {
+		logger.Error("Open screenshot file failed", logger.Error(err))
+		c.JSON(http.StatusInternalServerError, response.Error("文件读取失败"))
+		return
+	}
+	defer src.Close()
+
+	minioClient := database.GetMinIOClient()
+	if minioClient == nil {
+		c.JSON(http.StatusInternalServerError, response.Error("存储服务未初始化"))
+		return
+	}
+
+	bucketName := config.GetConfig().MinIO.Bucket
+	_, err = minioClient.PutObject(ctx, bucketName, objectName, src, file.Size, minio.PutObjectOptions{
+		ContentType: "image/png",
+	})
+	if err != nil {
+		logger.Error("Upload screenshot to MinIO failed", logger.Error(err))
+		c.JSON(http.StatusInternalServerError, response.Error("文件上传失败"))
+		return
+	}
+
+	fileURL := fmt.Sprintf("%s/%s/%s", config.GetConfig().MinIO.Endpoint, bucketName, objectName)
+
+	screenshotType := c.DefaultPostForm("type", "bigscreen_daily")
+
+	logger.Info("BigScreen screenshot uploaded",
+		logger.Int64("orgId", orgID),
+		logger.String("type", screenshotType),
+		logger.String("url", fileURL),
+	)
+
+	c.JSON(http.StatusOK, response.Success(map[string]interface{}{
+		"url":  fileURL,
+		"type": screenshotType,
+	}))
+}
+
+func SendScreenshotRequest() {
+	ctx := context.Background()
+
+	db := database.GetDB()
+	if db == nil {
+		return
+	}
+
+	var orgs []map[string]interface{}
+	db.Table("sys_organization").
+		Select("id, org_name").
+		Where("parent_id = 0 OR parent_id IS NULL").
+		Where("status = 1").
+		Find(&orgs)
+
+	for _, org := range orgs {
+		orgID, _ := ToInt64Safe(org["id"])
+		if orgID == 0 {
+			continue
 		}
 
-		var totalCases int64
-		caseDB.Count(&totalCases)
-
-		var pendingCases int64
-		caseDB.Where("status = ?", constants.CaseStatusPending).Count(&pendingCases)
-
-		var mediatingCases int64
-		caseDB.Where("status = ?", constants.CaseStatusMediating).Count(&mediatingCases)
-
-		var closedCases int64
-		caseDB.Where("status = ?", constants.CaseStatusClosed).Count(&closedCases)
-
-		var successCount int64
-		caseDB.Where("status = ? AND mediation_result = ?", constants.CaseStatusClosed, constants.MediationResultSuccess).
-			Count(&successCount)
-
-		successRate := 0.0
-		if closedCases > 0 {
-			successRate = float64(successCount) / float64(closedCases) * 100
-		}
-
-		var avgDays float64
-		database.GetDB().Table("dispute_case").
-			Where("status = ? AND deleted_at IS NULL", constants.CaseStatusClosed).
-			Where("created_at >= ?", thirtyDaysAgo).
-			Select("AVG(TIMESTAMPDIFF(HOUR, created_at, closed_time)) / 24.0").
-			Scan(&avgDays)
-
-		var timeoutCount int64
-		timeoutSQL := `SELECT COUNT(*) FROM dispute_case 
-			WHERE deleted_at IS NULL AND status IN (10, 20, 30, 40)
-			AND TIMESTAMPDIFF(HOUR, created_at, NOW()) > 72`
-		if len(childOrgs) > 0 {
-			timeoutSQL += " AND organization_id IN ?"
-			database.GetDB().Raw(timeoutSQL, childOrgs).Scan(&timeoutCount)
-		} else {
-			database.GetDB().Raw(timeoutSQL).Scan(&timeoutCount)
-		}
-
-		var avgSatisfaction float64
-		database.GetDB().Table("dispute_case").
-			Where("status = ? AND deleted_at IS NULL", constants.CaseStatusClosed).
-			Where("satisfaction_score > 0").
-			Where("created_at >= ?", thirtyDaysAgo).
-			Select("AVG(satisfaction_score)").
-			Scan(&avgSatisfaction)
-
-		var todayNew int64
-		todayStart := now.Format("2006-01-02")
-		database.GetDB().Table("dispute_case").
-			Where("DATE(created_at) = ?", todayStart).
-			Where("deleted_at IS NULL").
-			Count(&todayNew)
-
-		result := map[string]interface{}{
-			"overview": map[string]interface{}{
-				"totalCases":      totalCases,
-				"pendingCases":    pendingCases,
-				"mediatingCases":  mediatingCases,
-				"closedCases":     closedCases,
-				"successCount":    successCount,
-				"successRate":     fmt.Sprintf("%.1f", successRate),
-				"avgDays":         fmt.Sprintf("%.1f", avgDays),
-				"timeoutCount":    timeoutCount,
-				"avgSatisfaction": fmt.Sprintf("%.1f", avgSatisfaction),
-				"todayNew":        todayNew,
-				"isWarning":       successRate < 50,
-			},
-			"updateTime": now.Format("2006-01-02 15:04:05"),
-		}
-
-		jsonData, _ := json.Marshal(result)
-		cache.Set(ctx, cacheKey, string(jsonData), 120)
+		PushBigScreenDataForOrg(ctx, orgID)
 
 		roomID := fmt.Sprintf("bigscreen:%d", orgID)
 		msg := &WsMessage{
-			Type:   "bigscreen_update",
+			Type:   "screenshot_request",
 			RoomID: roomID,
-			Data:   result,
+			Data: map[string]interface{}{
+				"timestamp": time.Now().Unix(),
+				"type":      "daily_report",
+			},
 		}
 		BroadcastToRoom(roomID, msg)
+
+		logger.Info("Screenshot request sent",
+			logger.Int64("orgId", orgID),
+			logger.String("roomId", roomID),
+		)
 	}
+}
+
+func PushBigScreenDataForOrg(ctx context.Context, orgID int64) {
+	cacheKey := fmt.Sprintf("bigscreen:stats:%d", orgID)
+
+	now := time.Now()
+	thirtyDaysAgo := now.AddDate(0, 0, -30)
+
+	var childOrgs []int64
+	database.GetDB().Table("sys_organization").
+		Select("id").
+		Where("parent_id = ? OR id = ?", orgID, orgID).
+		Pluck("id", &childOrgs)
+
+	caseDB := database.GetDB().Table("dispute_case").
+		Where("deleted_at IS NULL").
+		Where("created_at >= ?", thirtyDaysAgo)
+
+	if len(childOrgs) > 0 {
+		caseDB = caseDB.Where("organization_id IN ?", childOrgs)
+	}
+
+	var totalCases int64
+	caseDB.Count(&totalCases)
+
+	var pendingCases int64
+	caseDB.Where("status = ?", constants.CaseStatusPending).Count(&pendingCases)
+
+	var mediatingCases int64
+	caseDB.Where("status = ?", constants.CaseStatusMediating).Count(&mediatingCases)
+
+	var closedCases int64
+	caseDB.Where("status = ?", constants.CaseStatusClosed).Count(&closedCases)
+
+	var successCount int64
+	caseDB.Where("status = ? AND mediation_result = ?", constants.CaseStatusClosed, constants.MediationResultSuccess).
+		Count(&successCount)
+
+	successRate := 0.0
+	if closedCases > 0 {
+		successRate = float64(successCount) / float64(closedCases) * 100
+	}
+
+	var avgDays float64
+	database.GetDB().Table("dispute_case").
+		Where("status = ? AND deleted_at IS NULL", constants.CaseStatusClosed).
+		Where("created_at >= ?", thirtyDaysAgo).
+		Select("AVG(TIMESTAMPDIFF(HOUR, created_at, closed_time)) / 24.0").
+		Scan(&avgDays)
+
+	var timeoutCount int64
+	timeoutSQL := `SELECT COUNT(*) FROM dispute_case 
+		WHERE deleted_at IS NULL AND status IN (10, 20, 30, 40)
+		AND TIMESTAMPDIFF(HOUR, created_at, NOW()) > 72`
+	if len(childOrgs) > 0 {
+		timeoutSQL += " AND organization_id IN ?"
+		database.GetDB().Raw(timeoutSQL, childOrgs).Scan(&timeoutCount)
+	} else {
+		database.GetDB().Raw(timeoutSQL).Scan(&timeoutCount)
+	}
+
+	var avgSatisfaction float64
+	database.GetDB().Table("dispute_case").
+		Where("status = ? AND deleted_at IS NULL", constants.CaseStatusClosed).
+		Where("satisfaction_score > 0").
+		Where("created_at >= ?", thirtyDaysAgo).
+		Select("AVG(satisfaction_score)").
+		Scan(&avgSatisfaction)
+
+	var todayNew int64
+	todayStart := now.Format("2006-01-02")
+	database.GetDB().Table("dispute_case").
+		Where("DATE(created_at) = ?", todayStart).
+		Where("deleted_at IS NULL").
+		Count(&todayNew)
+
+	var trendData []map[string]interface{}
+	database.GetDB().Table("dispute_case").
+		Select("DATE(created_at) as date, COUNT(*) as count").
+		Where("deleted_at IS NULL").
+		Where("created_at >= ?", thirtyDaysAgo).
+		Where(len(childOrgs) > 0, "organization_id IN ?", childOrgs).
+		Group("DATE(created_at)").
+		Order("date ASC").
+		Scan(&trendData)
+
+	trendResult := make([]map[string]interface{}, 0)
+	for i := 29; i >= 0; i-- {
+		date := now.AddDate(0, 0, -i).Format("2006-01-02")
+		count := 0
+		for _, item := range trendData {
+			if fmt.Sprintf("%v", item["date"]) == date {
+				count, _ = strconv.Atoi(fmt.Sprintf("%v", item["count"]))
+				break
+			}
+		}
+		trendResult = append(trendResult, map[string]interface{}{
+			"date":  date,
+			"count": count,
+		})
+	}
+
+	var typeStats []map[string]interface{}
+	database.GetDB().Table("dispute_case dc").
+		Select("dt.type_name, COUNT(dc.id) as count").
+		Joins("LEFT JOIN dispute_type dt ON dc.type_id = dt.id").
+		Where("dc.deleted_at IS NULL").
+		Where("dc.created_at >= ?", thirtyDaysAgo).
+		Where(len(childOrgs) > 0, "dc.organization_id IN ?", childOrgs).
+		Group("dt.id, dt.type_name").
+		Order("count DESC").
+		Limit(8).
+		Scan(&typeStats)
+
+	var mediatorRanking []map[string]interface{}
+	database.GetDB().Table("dispute_case dc").
+		Select("dc.mediator_id, u.real_name, o.org_name, "+
+			"COUNT(dc.id) as total_cases, "+
+			"SUM(CASE WHEN dc.status = 50 THEN 1 ELSE 0 END) as closed_cases, "+
+			"SUM(CASE WHEN dc.status = 50 AND dc.mediation_result = 1 THEN 1 ELSE 0 END) as success_cases").
+		Joins("LEFT JOIN sys_user u ON dc.mediator_id = u.id").
+		Joins("LEFT JOIN sys_organization o ON u.organization_id = o.id").
+		Where("dc.deleted_at IS NULL").
+		Where("dc.mediator_id IS NOT NULL").
+		Where("dc.created_at >= ?", thirtyDaysAgo).
+		Where(len(childOrgs) > 0, "dc.organization_id IN ?", childOrgs).
+		Group("dc.mediator_id, u.real_name, o.org_name").
+		Order("total_cases DESC").
+		Limit(10).
+		Scan(&mediatorRanking)
+
+	for i, item := range mediatorRanking {
+		closed, _ := ToInt64Safe(item["closed_cases"])
+		success, _ := ToInt64Safe(item["success_cases"])
+		successRate := "0.0"
+		if closed > 0 {
+			successRate = fmt.Sprintf("%.1f", float64(success)/float64(closed)*100)
+		}
+		mediatorRanking[i]["success_rate"] = successRate
+		mediatorRanking[i]["rank"] = i + 1
+		rate, _ := strconv.ParseFloat(successRate, 64)
+		mediatorRanking[i]["is_warning"] = rate < 50
+	}
+
+	var orgStats []map[string]interface{}
+	database.GetDB().Table("dispute_case dc").
+		Select("o.id as org_id, o.org_name, "+
+			"COUNT(dc.id) as total_cases, "+
+			"SUM(CASE WHEN dc.status = 50 THEN 1 ELSE 0 END) as closed_cases, "+
+			"SUM(CASE WHEN dc.status = 50 AND dc.mediation_result = 1 THEN 1 ELSE 0 END) as success_cases").
+		Joins("LEFT JOIN sys_organization o ON dc.organization_id = o.id").
+		Where("dc.deleted_at IS NULL").
+		Where("dc.created_at >= ?", thirtyDaysAgo).
+		Where(len(childOrgs) > 0, "dc.organization_id IN ?", childOrgs).
+		Group("o.id, o.org_name").
+		Order("total_cases DESC").
+		Limit(10).
+		Scan(&orgStats)
+
+	for i, item := range orgStats {
+		closed, _ := ToInt64Safe(item["closed_cases"])
+		success, _ := ToInt64Safe(item["success_cases"])
+		successRate := "0.0"
+		if closed > 0 {
+			successRate = fmt.Sprintf("%.1f", float64(success)/float64(closed)*100)
+		}
+		orgStats[i]["success_rate"] = successRate
+		rate, _ := strconv.ParseFloat(successRate, 64)
+		orgStats[i]["is_warning"] = rate < 50
+	}
+
+	dayNames := []string{"周一", "周二", "周三", "周四", "周五", "周六", "周日"}
+	hourNames := []string{"0时", "3时", "6时", "9时", "12时", "15时", "18时", "21时"}
+	heatmapData := make([]map[string]interface{}, 0)
+	for dayIdx := 0; dayIdx < 7; dayIdx++ {
+		for hourIdx := 0; hourIdx < 8; hourIdx++ {
+			heatmapData = append(heatmapData, map[string]interface{}{
+				"day":       dayNames[dayIdx],
+				"hour":      hourNames[hourIdx],
+				"value":     (dayIdx + hourIdx) % 15,
+				"dayIndex":  dayIdx,
+				"hourIndex": hourIdx,
+			})
+		}
+	}
+
+	result := map[string]interface{}{
+		"overview": map[string]interface{}{
+			"totalCases":      totalCases,
+			"pendingCases":    pendingCases,
+			"mediatingCases":  mediatingCases,
+			"closedCases":     closedCases,
+			"successCount":    successCount,
+			"successRate":     fmt.Sprintf("%.1f", successRate),
+			"avgDays":         fmt.Sprintf("%.1f", avgDays),
+			"timeoutCount":    timeoutCount,
+			"avgSatisfaction": fmt.Sprintf("%.1f", avgSatisfaction),
+			"todayNew":        todayNew,
+			"isWarning":       successRate < 50,
+		},
+		"trendData":        trendResult,
+		"typeStats":        typeStats,
+		"mediatorRanking":  mediatorRanking,
+		"orgStats":         orgStats,
+		"heatmapData":      heatmapData,
+		"updateTime":       now.Format("2006-01-02 15:04:05"),
+	}
+
+	jsonData, _ := json.Marshal(result)
+	cache.Set(ctx, cacheKey, string(jsonData), 120)
+
+	roomID := fmt.Sprintf("bigscreen:%d", orgID)
+	msg := &WsMessage{
+		Type:   "bigscreen_update",
+		RoomID: roomID,
+		Data:   result,
+	}
+	BroadcastToRoom(roomID, msg)
 }

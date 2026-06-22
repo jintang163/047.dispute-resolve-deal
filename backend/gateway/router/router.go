@@ -240,6 +240,7 @@ func RegisterRoutes(h *app.Hertz) {
 		{
 			stats.GET("/dashboard", handler.GetDashboardStats)
 			stats.GET("/bigscreen", handler.GetBigScreenStats)
+			stats.POST("/bigscreen/screenshot", handler.UploadBigScreenScreenshot)
 			stats.GET("/heatmap", handler.GetHeatmapData)
 			stats.GET("/heatmap/timeline", handler.GetHeatmapTimeline)
 			stats.GET("/heatmap/top-communities", handler.GetTopCommunities)

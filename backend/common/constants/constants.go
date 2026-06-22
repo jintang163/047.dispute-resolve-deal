@@ -161,6 +161,7 @@ const (
 	MinIOPathJudicial    = "judicial"
 	MinIOPathCallback    = "callback"
 	MinIOPathExport      = "export"
+	MinIOPathBigscreen   = "bigscreen"
 
 	ExportTypeCase        = 1
 	ExportTypePerformance = 2

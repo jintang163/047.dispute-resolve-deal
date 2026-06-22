@@ -1370,6 +1370,10 @@ func bigScreenDailyScreenshotTask() {
 		return
 	}
 
+	handler.SendScreenshotRequest()
+
+	time.Sleep(5 * time.Second)
+
 	var leaders []map[string]interface{}
 	db.Table("sys_user").
 		Select("id, real_name, phone").
