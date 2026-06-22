@@ -5,6 +5,7 @@ import Login from './pages/Login';
 import DisputeList from './pages/Dispute/List';
 import DisputeDetail from './pages/Dispute/Detail';
 import DisputeCreate from './pages/Dispute/Create';
+import DisputeTodo from './pages/Dispute/Todo';
 import MediationList from './pages/Mediation/List';
 import VideoMediation from './pages/Video';
 import VideoRoom from './pages/Video/VideoRoom';
@@ -109,6 +110,7 @@ const App: React.FC = () => {
           <Route path="dispute">
             <Route index element={<DisputeList />} />
             <Route path="create" element={<DisputeCreate />} />
+            <Route path="todo" element={<DisputeTodo />} />
             <Route path=":id" element={<DisputeDetail />} />
           </Route>
           <Route path="mediation" element={<MediationList />} />

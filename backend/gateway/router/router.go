@@ -86,17 +86,18 @@ func RegisterRoutes(h *app.Hertz) {
 		{
 			dispute.GET("", handler.GetDisputeList)
 			dispute.GET("/search", handler.SearchDisputeCases)
+			dispute.GET("/todo", handler.GetTodoList)
+			dispute.GET("/mediators", handler.GetMediatorList)
+			dispute.GET("/mediators/:id/load", handler.GetMediatorLoad)
 			dispute.GET("/:id", handler.GetDisputeDetail)
 			dispute.POST("", handler.CreateDispute)
 			dispute.POST("/:id/assign", handler.AssignDispute)
 			dispute.POST("/:id/urge", handler.UrgeDispute)
 			dispute.POST("/:id/status", handler.UpdateDisputeStatus)
+			dispute.POST("/:id/risk-flag", handler.SetCaseRiskFlag)
 			dispute.GET("/:id/history", handler.GetDisputeHistory)
 			dispute.GET("/:id/escalations", handler.GetCaseEscalationListHandler)
 			dispute.GET("/:id/transfers", handler.GetCaseTransferList)
-
-			dispute.GET("/mediators", handler.GetMediatorList)
-			dispute.GET("/mediators/:id/load", handler.GetMediatorLoad)
 
 			evidence := dispute.Group("/:id/evidence")
 			{

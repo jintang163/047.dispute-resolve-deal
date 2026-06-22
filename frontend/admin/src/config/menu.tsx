@@ -26,6 +26,8 @@ import {
   GiftOutlined,
   ShoppingOutlined,
   ThunderboltOutlined,
+  WarningOutlined,
+  OrderedListOutlined,
 } from '@ant-design/icons';
 
 export interface MenuItem {
@@ -60,6 +62,12 @@ export const menuConfig: MenuItem[] = [
     label: '纠纷案件管理',
     icon: React.createElement(FileTextOutlined),
     children: [
+      {
+        key: 'dispute-todo',
+        label: '待办案件',
+        icon: React.createElement(WarningOutlined),
+        path: '/dispute/todo',
+      },
       {
         key: 'dispute-list',
         label: '案件列表',

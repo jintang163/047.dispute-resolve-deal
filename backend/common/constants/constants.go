@@ -28,6 +28,15 @@ const (
 	CaseLevelNormal      = 3
 	CaseLevelCommon      = 4
 
+	RiskFlagNone         = 0
+	RiskFlagPetition     = 1
+	RiskFlagExtreme      = 2
+	RiskFlagMass         = 3
+
+	SortPriorityRiskAlert     = 1
+	SortPriorityOverdue       = 2
+	SortPriorityNewAssigned   = 3
+
 	CaseSourceKiosk   = 1
 	CaseSourceMiniApp = 2
 	CaseSourcePhone   = 3
@@ -368,6 +377,26 @@ var CaseLevelMap = map[int]string{
 	CaseLevelUrgent:      "紧急",
 	CaseLevelNormal:      "一般",
 	CaseLevelCommon:      "普通",
+}
+
+var RiskFlagMap = map[int]string{
+	RiskFlagNone:     "正常",
+	RiskFlagPetition: "扬言上访",
+	RiskFlagExtreme:  "极端行为",
+	RiskFlagMass:     "群体事件",
+}
+
+var RiskFlagColorMap = map[int]string{
+	RiskFlagNone:     "default",
+	RiskFlagPetition: "red",
+	RiskFlagExtreme:  "red",
+	RiskFlagMass:     "red",
+}
+
+var SortPriorityMap = map[int]string{
+	SortPriorityRiskAlert:   "风险预警",
+	SortPriorityOverdue:     "超时未处理",
+	SortPriorityNewAssigned: "新分配",
 }
 
 var RoleMap = map[int]string{

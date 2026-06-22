@@ -52,6 +52,9 @@ type DisputeCase struct {
 	EscalateLevel      int32      `gorm:"default:0" json:"escalateLevel"`
 	EscalateTime       *time.Time `json:"escalateTime"`
 	LastProgressTime   *time.Time `json:"lastProgressTime"`
+	RiskFlag           int32      `gorm:"default:0" json:"riskFlag"`
+	RiskReason         string     `gorm:"size:500" json:"riskReason"`
+	RiskFlagTime       *time.Time `json:"riskFlagTime"`
 
 	OrgID   int64  `gorm:"-" json:"orgId"`
 	OrgName string `gorm:"-" json:"orgName"`

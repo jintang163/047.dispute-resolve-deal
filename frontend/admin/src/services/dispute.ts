@@ -423,4 +423,12 @@ export const disputeService = {
   getMediationRecords: (caseId: string) => {
     return request.get<any[]>(`/dispute/${caseId}/mediation`);
   },
+
+  getTodoList: (params?: { pageNum?: number; pageSize?: number; status?: number }) => {
+    return request.get<DisputeListResponse>('/dispute/todo', { params });
+  },
+
+  setRiskFlag: (id: number | string, riskFlag: number, reason?: string) => {
+    return request.post(`/dispute/${id}/risk-flag`, { riskFlag, reason });
+  },
 };

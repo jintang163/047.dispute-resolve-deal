@@ -135,6 +135,134 @@ func GetDisputeList(ctx context.Context, c *app.RequestContext) {
 	c.JSON(http.StatusOK, response.Page(list, total, req.Page, req.PageSize))
 }
 
+type TodoListRequest struct {
+	common.BaseQuery
+	Status int32 `form:"status"`
+}
+
+func GetTodoList(ctx context.Context, c *app.RequestContext) {
+	var req TodoListRequest
+	if err := c.BindAndValidate(&req); err != nil {
+		c.JSON(http.StatusBadRequest, response.BadRequest(err.Error()))
+		return
+	}
+
+	userInfo := middleware.GetUserInfo(c)
+
+	db := database.GetDB().Table("dispute_case dc").
+		Select(`dc.*, dt.type_name, dt.level_path as type_path, su.real_name as mediator_name, so.org_name,
+			CASE 
+				WHEN dc.risk_flag > 0 THEN 1
+				WHEN dc.status IN (10, 20) AND TIMESTAMPDIFF(HOUR, dc.mediator_time, NOW()) > 72 THEN 2
+				WHEN dc.status = 10 AND dc.mediator_time IS NULL THEN 3
+				ELSE 4
+			END as sort_priority,
+			CASE 
+				WHEN dc.risk_flag = 1 THEN '扬言上访'
+				WHEN dc.risk_flag = 2 THEN '极端行为'
+				WHEN dc.risk_flag = 3 THEN '群体事件'
+				WHEN dc.risk_flag = 0 AND dc.status IN (10, 20) AND TIMESTAMPDIFF(HOUR, dc.mediator_time, NOW()) > 72 THEN '超时未处理'
+				WHEN dc.risk_flag = 0 AND dc.status = 10 AND dc.mediator_time IS NULL THEN '新分配'
+				ELSE ''
+			END as priority_label`).
+		Joins("LEFT JOIN dispute_type dt ON dc.type_id = dt.id").
+		Joins("LEFT JOIN sys_user su ON dc.mediator_id = su.id").
+		Joins("LEFT JOIN sys_organization so ON dc.organization_id = so.id").
+		Where("dc.deleted_at IS NULL").
+		Where("dc.status IN ?", []int32{constants.CaseStatusPending, constants.CaseStatusMediating})
+
+	if userInfo.Role == constants.RoleMediator {
+		db = db.Where("dc.mediator_id = ?", userInfo.UserID)
+	} else if userInfo.Role == constants.RoleLeader {
+		db = db.Where("dc.organization_id IN (SELECT id FROM sys_organization WHERE parent_id = ? OR id = ?)",
+			userInfo.OrganizationID, userInfo.OrganizationID)
+	}
+
+	if req.Status > 0 {
+		db = db.Where("dc.status = ?", req.Status)
+	}
+
+	var total int64
+	db.Count(&total)
+
+	var list []map[string]interface{}
+	db.Order("sort_priority ASC, dc.case_level ASC, dc.created_at ASC").
+		Offset(req.GetOffset()).
+		Limit(req.GetLimit()).
+		Find(&list)
+
+	for _, item := range list {
+		if status, ok := item["status"].(int32); ok {
+			item["status_name"] = constants.CaseStatusMap[int(status)]
+		}
+		if level, ok := item["case_level"].(int32); ok {
+			item["case_level_name"] = constants.CaseLevelMap[int(level)]
+		}
+		if riskFlag, ok := item["risk_flag"].(int32); ok {
+			item["risk_flag_name"] = constants.RiskFlagMap[int(riskFlag)]
+		}
+		parseKeywordsJSON(item)
+	}
+
+	c.JSON(http.StatusOK, response.Page(list, total, req.Page, req.PageSize))
+}
+
+type SetRiskFlagRequest struct {
+	RiskFlag int32  `json:"riskFlag" binding:"required"`
+	Reason   string `json:"reason"`
+}
+
+func SetCaseRiskFlag(ctx context.Context, c *app.RequestContext) {
+	id, _ := strconv.ParseInt(c.Param("id"), 10, 64)
+	if id == 0 {
+		c.JSON(http.StatusBadRequest, response.BadRequest("无效的案件ID"))
+		return
+	}
+
+	var req SetRiskFlagRequest
+	if err := c.BindAndValidate(&req); err != nil {
+		c.JSON(http.StatusBadRequest, response.BadRequest(err.Error()))
+		return
+	}
+
+	if req.RiskFlag < 0 || req.RiskFlag > 3 {
+		c.JSON(http.StatusBadRequest, response.BadRequest("风险标记值无效(0-3)"))
+		return
+	}
+
+	userInfo := middleware.GetUserInfo(c)
+
+	updates := map[string]interface{}{
+		"risk_flag":     req.RiskFlag,
+		"risk_reason":   req.Reason,
+		"risk_flag_time": time.Now(),
+	}
+
+	if err := database.GetDB().Table("dispute_case").
+		Where("id = ? AND deleted_at IS NULL", id).
+		Updates(updates).Error; err != nil {
+		logger.Error("Set case risk flag failed", logger.Error(err))
+		c.JSON(http.StatusInternalServerError, response.ServerError("设置风险标记失败"))
+		return
+	}
+
+	history := map[string]interface{}{
+		"case_id":         id,
+		"operation_type":  "RISK_FLAG",
+		"operation_detail": fmt.Sprintf("设置风险标记: %s, 原因: %s", constants.RiskFlagMap[int(req.RiskFlag)], req.Reason),
+		"operator_id":     userInfo.UserID,
+		"operator_name":   userInfo.RealName,
+	}
+	database.GetDB().Table("dispute_case_history").Create(history)
+
+	cacheKey := fmt.Sprintf("%s%d", constants.RedisKeyPrefixCase, id)
+	cache.Del(ctx, cacheKey)
+
+	go SyncCaseToES(id)
+
+	c.JSON(http.StatusOK, response.SuccessWithMessage(nil, "风险标记设置成功"))
+}
+
 func GetDisputeDetail(ctx context.Context, c *app.RequestContext) {
 	id, _ := strconv.ParseInt(c.Param("id"), 10, 64)
 
