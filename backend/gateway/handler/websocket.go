@@ -104,6 +104,16 @@ func HandleVideoWebSocket(ctx context.Context, c *app.RequestContext) {
 	}
 }
 
+func HandleBigScreenWebSocket(ctx context.Context, c *app.RequestContext) {
+	HandleWebSocket(ctx, c)
+
+	userInfo := middleware.GetUserInfo(c)
+	if client, ok := clients[userInfo.UserID]; ok {
+		roomID := fmt.Sprintf("bigscreen:%d", userInfo.OrganizationID)
+		JoinRoom(client, roomID)
+	}
+}
+
 func (client *WsClient) readPump() {
 	defer func() {
 		client.cleanup()

@@ -928,7 +928,7 @@ func GetKeywordStats(ctx context.Context, c *app.RequestContext) {
 
 	for _, row := range rows {
 		totalCases++
-		caseID, _ := toInt64Safe(row["id"])
+		caseID, _ := ToInt64Safe(row["id"])
 		raw := row["keywords"]
 		var kws []string
 		switch v := raw.(type) {
@@ -1009,7 +1009,7 @@ func GetKeywordStats(ctx context.Context, c *app.RequestContext) {
 	}))
 }
 
-func toInt64Safe(v interface{}) (int64, bool) {
+func ToInt64Safe(v interface{}) (int64, bool) {
 	if v == nil {
 		return 0, false
 	}
@@ -1027,4 +1027,355 @@ func toInt64Safe(v interface{}) (int64, bool) {
 		return n, e == nil
 	}
 	return 0, false
+}
+
+func GetBigScreenStats(ctx context.Context, c *app.RequestContext) {
+	userInfo := middleware.GetUserInfo(c)
+	orgID := userInfo.OrganizationID
+
+	cacheKey := fmt.Sprintf("bigscreen:stats:%d", orgID)
+	cachedData, err := cache.Get(ctx, cacheKey)
+	if err == nil && cachedData != "" {
+		var data map[string]interface{}
+		json.Unmarshal([]byte(cachedData), &data)
+		c.JSON(http.StatusOK, response.Success(data))
+		return
+	}
+
+	now := time.Now()
+	thirtyDaysAgo := now.AddDate(0, 0, -30)
+
+	db := database.GetDB().Table("dispute_case").
+		Where("deleted_at IS NULL").
+		Where("created_at >= ?", thirtyDaysAgo)
+
+	var childOrgs []int64
+	if orgID > 0 {
+		database.GetDB().Table("sys_organization").
+			Select("id").
+			Where("parent_id = ? OR id = ?", orgID, orgID).
+			Pluck("id", &childOrgs)
+		db = db.Where("organization_id IN ?", childOrgs)
+	}
+
+	var totalCases int64
+	db.Count(&totalCases)
+
+	var pendingCases int64
+	db.Where("status = ?", constants.CaseStatusPending).Count(&pendingCases)
+
+	var mediatingCases int64
+	db.Where("status = ?", constants.CaseStatusMediating).Count(&mediatingCases)
+
+	var closedCases int64
+	db.Where("status = ?", constants.CaseStatusClosed).Count(&closedCases)
+
+	var successCount int64
+	db.Where("status = ? AND mediation_result = ?", constants.CaseStatusClosed, constants.MediationResultSuccess).
+		Count(&successCount)
+
+	successRate := 0.0
+	if closedCases > 0 {
+		successRate = float64(successCount) / float64(closedCases) * 100
+	}
+
+	var avgDays float64
+	database.GetDB().Table("dispute_case").
+		Where("status = ? AND deleted_at IS NULL", constants.CaseStatusClosed).
+		Where("created_at >= ?", thirtyDaysAgo).
+		Select("AVG(TIMESTAMPDIFF(HOUR, created_at, closed_time)) / 24.0").
+		Scan(&avgDays)
+
+	var timeoutCount int64
+	timeoutSQL := `SELECT COUNT(*) FROM dispute_case 
+		WHERE deleted_at IS NULL AND status IN (10, 20, 30, 40)
+		AND TIMESTAMPDIFF(HOUR, created_at, NOW()) > 72`
+	if len(childOrgs) > 0 {
+		timeoutSQL += " AND organization_id IN ?"
+		database.GetDB().Raw(timeoutSQL, childOrgs).Scan(&timeoutCount)
+	} else {
+		database.GetDB().Raw(timeoutSQL).Scan(&timeoutCount)
+	}
+
+	var avgSatisfaction float64
+	database.GetDB().Table("dispute_case").
+		Where("status = ? AND deleted_at IS NULL", constants.CaseStatusClosed).
+		Where("satisfaction_score > 0").
+		Where("created_at >= ?", thirtyDaysAgo).
+		Select("AVG(satisfaction_score)").
+		Scan(&avgSatisfaction)
+
+	var todayNew int64
+	todayStart := now.Format("2006-01-02")
+	database.GetDB().Table("dispute_case").
+		Where("DATE(created_at) = ?", todayStart).
+		Where("deleted_at IS NULL").
+		Count(&todayNew)
+
+	var trendData []map[string]interface{}
+	database.GetDB().Table("dispute_case").
+		Select("DATE_FORMAT(created_at, '%Y-%m-%d') as date, COUNT(*) as count").
+		Where("deleted_at IS NULL").
+		Where("created_at >= ?", thirtyDaysAgo).
+		Group("date").
+		Order("date ASC").
+		Find(&trendData)
+
+	var typeStats []map[string]interface{}
+	database.GetDB().Table("dispute_case dc").
+		Select("dt.type_name, COUNT(*) as count").
+		Joins("LEFT JOIN dispute_type dt ON dc.type_id = dt.id").
+		Where("dc.deleted_at IS NULL").
+		Where("dc.created_at >= ?", thirtyDaysAgo).
+		Group("dt.id, dt.type_name").
+		Order("count DESC").
+		Limit(8).
+		Find(&typeStats)
+
+	var mediatorRanking []map[string]interface{}
+	database.GetDB().Table("sys_user su").
+		Select("su.id, su.real_name, so.org_name, "+
+			"COUNT(DISTINCT dc.id) as total_cases, "+
+			"SUM(CASE WHEN dc.status = 50 THEN 1 ELSE 0 END) as closed_cases, "+
+			"SUM(CASE WHEN dc.status = 50 AND dc.mediation_result = 1 THEN 1 ELSE 0 END) as success_cases").
+		Joins("LEFT JOIN dispute_case dc ON su.id = dc.mediator_id AND dc.deleted_at IS NULL AND dc.created_at >= ?", thirtyDaysAgo).
+		Joins("LEFT JOIN sys_organization so ON su.organization_id = so.id").
+		Where("su.role = ?", constants.RoleMediator).
+		Where("su.status = 1").
+		Group("su.id, su.real_name, so.org_name").
+		Having("total_cases > 0").
+		Order("success_cases DESC, total_cases DESC").
+		Limit(10).
+		Find(&mediatorRanking)
+
+	for i, item := range mediatorRanking {
+		item["rank"] = i + 1
+		closed, _ := ToInt64Safe(item["closed_cases"])
+		success, _ := ToInt64Safe(item["success_cases"])
+		rate := 0.0
+		if closed > 0 {
+			rate = float64(success) / float64(closed) * 100
+		}
+		item["success_rate"] = fmt.Sprintf("%.1f", rate)
+		item["is_warning"] = rate < 50
+	}
+
+	var orgStats []map[string]interface{}
+	database.GetDB().Table("sys_organization so").
+		Select("so.id, so.org_name, "+
+			"COUNT(DISTINCT dc.id) as total_cases, "+
+			"SUM(CASE WHEN dc.status = 50 THEN 1 ELSE 0 END) as closed_cases, "+
+			"SUM(CASE WHEN dc.status = 50 AND dc.mediation_result = 1 THEN 1 ELSE 0 END) as success_cases").
+		Joins("LEFT JOIN dispute_case dc ON so.id = dc.organization_id AND dc.deleted_at IS NULL AND dc.created_at >= ?", thirtyDaysAgo).
+		Where("so.parent_id = ? OR so.id = ?", orgID, orgID).
+		Group("so.id, so.org_name").
+		Order("total_cases DESC").
+		Find(&orgStats)
+
+	for _, item := range orgStats {
+		closed, _ := ToInt64Safe(item["closed_cases"])
+		success, _ := ToInt64Safe(item["success_cases"])
+		rate := 0.0
+		if closed > 0 {
+			rate = float64(success) / float64(closed) * 100
+		}
+		item["success_rate"] = fmt.Sprintf("%.1f", rate)
+		item["is_warning"] = rate < 50
+	}
+
+	var heatmapData []map[string]interface{}
+	weeks := []string{"周一", "周二", "周三", "周四", "周五", "周六", "周日"}
+	hours := []string{"00", "02", "04", "06", "08", "10", "12", "14", "16", "18", "20", "22"}
+
+	heatmapSQL := `SELECT 
+		WEEKDAY(created_at) as day_of_week,
+		HOUR(created_at) as hour_of_day,
+		COUNT(*) as case_count
+	FROM dispute_case 
+	WHERE deleted_at IS NULL AND created_at >= ?`
+	if len(childOrgs) > 0 {
+		heatmapSQL += " AND organization_id IN ?"
+	}
+	heatmapSQL += " GROUP BY WEEKDAY(created_at), HOUR(created_at)"
+
+	var rawHeatmap []map[string]interface{}
+	if len(childOrgs) > 0 {
+		database.GetDB().Raw(heatmapSQL, thirtyDaysAgo, childOrgs).Scan(&rawHeatmap)
+	} else {
+		database.GetDB().Raw(heatmapSQL, thirtyDaysAgo).Scan(&rawHeatmap)
+	}
+
+	heatmapMap := make(map[string]int)
+	for _, item := range rawHeatmap {
+		day, _ := ToInt64Safe(item["day_of_week"])
+		hour, _ := ToInt64Safe(item["hour_of_day"])
+		count, _ := ToInt64Safe(item["case_count"])
+		key := fmt.Sprintf("%d-%d", day, hour/2)
+		heatmapMap[key] = int(count)
+	}
+
+	for i := 0; i < 7; i++ {
+		for j := 0; j < 12; j++ {
+			key := fmt.Sprintf("%d-%d", i, j)
+			count := heatmapMap[key]
+			heatmapData = append(heatmapData, map[string]interface{}{
+				"day":   weeks[i],
+				"hour":  hours[j],
+				"value": count,
+				"dayIndex":   i,
+				"hourIndex":  j,
+			})
+		}
+	}
+
+	result := map[string]interface{}{
+		"overview": map[string]interface{}{
+			"totalCases":      totalCases,
+			"pendingCases":    pendingCases,
+			"mediatingCases":  mediatingCases,
+			"closedCases":     closedCases,
+			"successCount":    successCount,
+			"successRate":     fmt.Sprintf("%.1f", successRate),
+			"avgDays":         fmt.Sprintf("%.1f", avgDays),
+			"timeoutCount":    timeoutCount,
+			"avgSatisfaction": fmt.Sprintf("%.1f", avgSatisfaction),
+			"todayNew":        todayNew,
+			"isWarning":       successRate < 50,
+		},
+		"trendData":       trendData,
+		"typeStats":       typeStats,
+		"mediatorRanking": mediatorRanking,
+		"orgStats":        orgStats,
+		"heatmapData":     heatmapData,
+		"updateTime":      now.Format("2006-01-02 15:04:05"),
+	}
+
+	jsonData, _ := json.Marshal(result)
+	cache.Set(ctx, cacheKey, string(jsonData), 60)
+
+	c.JSON(http.StatusOK, response.Success(result))
+}
+
+func PushBigScreenData() {
+	ctx := context.Background()
+
+	db := database.GetDB()
+	if db == nil {
+		return
+	}
+
+	var orgs []map[string]interface{}
+	db.Table("sys_organization").
+		Select("id, org_name").
+		Where("parent_id = 0 OR parent_id IS NULL").
+		Where("status = 1").
+		Find(&orgs)
+
+	for _, org := range orgs {
+		orgID, _ := ToInt64Safe(org["id"])
+		if orgID == 0 {
+			continue
+		}
+
+		cacheKey := fmt.Sprintf("bigscreen:stats:%d", orgID)
+
+		now := time.Now()
+		thirtyDaysAgo := now.AddDate(0, 0, -30)
+
+		var childOrgs []int64
+		database.GetDB().Table("sys_organization").
+			Select("id").
+			Where("parent_id = ? OR id = ?", orgID, orgID).
+			Pluck("id", &childOrgs)
+
+		caseDB := database.GetDB().Table("dispute_case").
+			Where("deleted_at IS NULL").
+			Where("created_at >= ?", thirtyDaysAgo)
+
+		if len(childOrgs) > 0 {
+			caseDB = caseDB.Where("organization_id IN ?", childOrgs)
+		}
+
+		var totalCases int64
+		caseDB.Count(&totalCases)
+
+		var pendingCases int64
+		caseDB.Where("status = ?", constants.CaseStatusPending).Count(&pendingCases)
+
+		var mediatingCases int64
+		caseDB.Where("status = ?", constants.CaseStatusMediating).Count(&mediatingCases)
+
+		var closedCases int64
+		caseDB.Where("status = ?", constants.CaseStatusClosed).Count(&closedCases)
+
+		var successCount int64
+		caseDB.Where("status = ? AND mediation_result = ?", constants.CaseStatusClosed, constants.MediationResultSuccess).
+			Count(&successCount)
+
+		successRate := 0.0
+		if closedCases > 0 {
+			successRate = float64(successCount) / float64(closedCases) * 100
+		}
+
+		var avgDays float64
+		database.GetDB().Table("dispute_case").
+			Where("status = ? AND deleted_at IS NULL", constants.CaseStatusClosed).
+			Where("created_at >= ?", thirtyDaysAgo).
+			Select("AVG(TIMESTAMPDIFF(HOUR, created_at, closed_time)) / 24.0").
+			Scan(&avgDays)
+
+		var timeoutCount int64
+		timeoutSQL := `SELECT COUNT(*) FROM dispute_case 
+			WHERE deleted_at IS NULL AND status IN (10, 20, 30, 40)
+			AND TIMESTAMPDIFF(HOUR, created_at, NOW()) > 72`
+		if len(childOrgs) > 0 {
+			timeoutSQL += " AND organization_id IN ?"
+			database.GetDB().Raw(timeoutSQL, childOrgs).Scan(&timeoutCount)
+		} else {
+			database.GetDB().Raw(timeoutSQL).Scan(&timeoutCount)
+		}
+
+		var avgSatisfaction float64
+		database.GetDB().Table("dispute_case").
+			Where("status = ? AND deleted_at IS NULL", constants.CaseStatusClosed).
+			Where("satisfaction_score > 0").
+			Where("created_at >= ?", thirtyDaysAgo).
+			Select("AVG(satisfaction_score)").
+			Scan(&avgSatisfaction)
+
+		var todayNew int64
+		todayStart := now.Format("2006-01-02")
+		database.GetDB().Table("dispute_case").
+			Where("DATE(created_at) = ?", todayStart).
+			Where("deleted_at IS NULL").
+			Count(&todayNew)
+
+		result := map[string]interface{}{
+			"overview": map[string]interface{}{
+				"totalCases":      totalCases,
+				"pendingCases":    pendingCases,
+				"mediatingCases":  mediatingCases,
+				"closedCases":     closedCases,
+				"successCount":    successCount,
+				"successRate":     fmt.Sprintf("%.1f", successRate),
+				"avgDays":         fmt.Sprintf("%.1f", avgDays),
+				"timeoutCount":    timeoutCount,
+				"avgSatisfaction": fmt.Sprintf("%.1f", avgSatisfaction),
+				"todayNew":        todayNew,
+				"isWarning":       successRate < 50,
+			},
+			"updateTime": now.Format("2006-01-02 15:04:05"),
+		}
+
+		jsonData, _ := json.Marshal(result)
+		cache.Set(ctx, cacheKey, string(jsonData), 120)
+
+		roomID := fmt.Sprintf("bigscreen:%d", orgID)
+		msg := &WsMessage{
+			Type:   "bigscreen_update",
+			RoomID: roomID,
+			Data:   result,
+		}
+		BroadcastToRoom(roomID, msg)
+	}
 }

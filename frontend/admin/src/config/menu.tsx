@@ -44,6 +44,12 @@ export const menuConfig: MenuItem[] = [
     path: '/dashboard',
   },
   {
+    key: 'bigscreen',
+    label: '数据驾驶舱',
+    icon: React.createElement(BarChartOutlined),
+    path: '/bigscreen',
+  },
+  {
     key: 'heatmap',
     label: '纠纷热力图',
     icon: React.createElement(HeatMapOutlined),

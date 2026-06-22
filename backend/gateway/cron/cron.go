@@ -72,6 +72,8 @@ func StartCronTasks() {
 		addCronTask("0 30 * * * ?", escalateUrgedTimeoutCasesTask, "escalate_urged_timeout_cases")
 		addCronTask("0 0 */1 * * ?", transferTimeoutCheckTask, "transfer_timeout_check")
 		addCronTask("0 0 3 * * ?", caseLibraryArchiveTask, "case_library_archive")
+		addCronTask("0 */30 * * * ?", bigScreenDataPushTask, "bigscreen_data_push")
+		addCronTask("0 0 9 * * ?", bigScreenDailyScreenshotTask, "bigscreen_daily_screenshot")
 
 		cronInstance.Start()
 		logger.Info("All cron tasks started", zap.Int("taskCount", len(entryIDs)))
@@ -1324,6 +1326,122 @@ func caseLibraryArchiveTask() {
 	elapsed := time.Since(startTime)
 	logger.Info("Case library archive task completed",
 		zap.Int("archivedCount", archivedCount),
+		zap.Duration("elapsed", elapsed),
+	)
+}
+
+func bigScreenDataPushTask() {
+	ctx := context.Background()
+	lockKey := constants.RedisKeyPrefixLock + "cron:bigscreen_data_push"
+
+	locked, err := acquireLock(ctx, lockKey, 60*time.Second)
+	if err != nil || !locked {
+		logger.Debug("Skip bigscreen data push task, lock not acquired")
+		return
+	}
+	defer releaseLock(ctx, lockKey)
+
+	logger.Debug("Starting bigscreen data push task")
+	startTime := time.Now()
+
+	handler.PushBigScreenData()
+
+	elapsed := time.Since(startTime)
+	logger.Debug("Bigscreen data push task completed", zap.Duration("elapsed", elapsed))
+}
+
+func bigScreenDailyScreenshotTask() {
+	ctx := context.Background()
+	lockKey := constants.RedisKeyPrefixLock + "cron:bigscreen_daily_screenshot"
+
+	locked, err := acquireLock(ctx, lockKey, 300*time.Second)
+	if err != nil || !locked {
+		logger.Debug("Skip bigscreen daily screenshot task, lock not acquired")
+		return
+	}
+	defer releaseLock(ctx, lockKey)
+
+	logger.Info("Starting bigscreen daily screenshot task")
+	startTime := time.Now()
+
+	db := database.GetDB()
+	if db == nil {
+		logger.Error("Database not initialized")
+		return
+	}
+
+	var leaders []map[string]interface{}
+	db.Table("sys_user").
+		Select("id, real_name, phone").
+		Where("role <= ?", constants.RoleLeader).
+		Where("status = 1").
+		Where("deleted_at IS NULL").
+		Find(&leaders)
+
+	now := time.Now()
+	today := now.Format("2006-01-02")
+
+	for _, leader := range leaders {
+		userID, _ := handler.ToInt64Safe(leader["id"])
+		userName, _ := leader["real_name"].(string)
+		if userID == 0 {
+			continue
+		}
+
+		title := "【数据日报】纠纷调解数据驾驶舱"
+		content := fmt.Sprintf("尊敬的%s您好，今日数据驾驶舱日报已生成，请登录系统查看大屏数据详情。统计日期：%s", userName, today)
+
+		insertSQL := `INSERT INTO notification_record 
+			(receiver_id, receiver_name, template_id, template_name, template_type, 
+			 title, content, channel_type, send_status, params, created_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+
+		params := map[string]interface{}{
+			"type":      "bigscreen_daily",
+			"date":      today,
+			"screenshot": true,
+		}
+		paramsJSON, _ := json.Marshal(params)
+
+		channels := []string{"站内信", "短信"}
+		for _, ch := range channels {
+			if err := db.Exec(insertSQL,
+				userID, userName,
+				0, "大屏日报推送", 6,
+				title, content,
+				ch, 1,
+				string(paramsJSON),
+				now,
+			).Error; err != nil {
+				logger.Warn("Insert bigscreen daily notification failed",
+					zap.Int64("userId", userID),
+					zap.String("channel", ch),
+					logger.Error(err),
+				)
+			}
+		}
+
+		msg := &handler.WsMessage{
+			Type:    "bigscreen_daily",
+			Message: title,
+			Data: map[string]interface{}{
+				"title":   title,
+				"content": content,
+				"date":    today,
+				"sentAt":  now.Format("2006-01-02 15:04:05"),
+			},
+		}
+		handler.SendToUser(userID, msg)
+
+		logger.Info("Sent bigscreen daily notification",
+			zap.Int64("userId", userID),
+			zap.String("userName", userName),
+		)
+	}
+
+	elapsed := time.Since(startTime)
+	logger.Info("Bigscreen daily screenshot task completed",
+		zap.Int("leaderCount", len(leaders)),
 		zap.Duration("elapsed", elapsed),
 	)
 }

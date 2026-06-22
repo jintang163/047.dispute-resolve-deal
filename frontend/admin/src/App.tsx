@@ -39,6 +39,7 @@ import PatrolPointFlow from './pages/Patrol/PointFlow';
 import PatrolGiftList from './pages/Patrol/GiftList';
 import PatrolGiftCategory from './pages/Patrol/GiftCategory';
 import PatrolExchangeOrderList from './pages/Patrol/ExchangeOrderList';
+import BigScreen from './pages/BigScreen';
 import { getToken } from './utils/auth';
 import { useUserStore } from './stores/user';
 
@@ -86,6 +87,14 @@ const App: React.FC = () => {
       <Routes>
         <Route path="/login" element={<Login />} />
         <Route path="/verify/:certNo" element={<PublicVerify />} />
+        <Route
+          path="/bigscreen"
+          element={
+            <PrivateRoute>
+              <BigScreen />
+            </PrivateRoute>
+          }
+        />
         <Route
           path="/"
           element={

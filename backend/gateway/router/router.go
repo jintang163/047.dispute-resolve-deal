@@ -239,6 +239,7 @@ func RegisterRoutes(h *app.Hertz) {
 		stats := userAuth.Group("/stats")
 		{
 			stats.GET("/dashboard", handler.GetDashboardStats)
+			stats.GET("/bigscreen", handler.GetBigScreenStats)
 			stats.GET("/heatmap", handler.GetHeatmapData)
 			stats.GET("/heatmap/timeline", handler.GetHeatmapTimeline)
 			stats.GET("/heatmap/top-communities", handler.GetTopCommunities)
@@ -474,6 +475,11 @@ func RegisterRoutes(h *app.Hertz) {
 			ws.GET("/case/:caseId", handler.HandleCaseWebSocket)
 			ws.GET("/online-users", handler.GetOnlineUsers)
 			ws.POST("/broadcast", handler.BroadcastNotification)
+		}
+
+		wsBigScreen := api.Group("/ws", middleware.WSJWTAuthMiddleware())
+		{
+			wsBigScreen.GET("/bigscreen", handler.HandleBigScreenWebSocket)
 		}
 
 		patrol := userAuth.Group("/patrol")
