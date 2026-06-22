@@ -22,6 +22,10 @@ import {
   HeartOutlined,
   CalendarOutlined,
   DownloadOutlined,
+  SearchOutlined,
+  GiftOutlined,
+  ShoppingOutlined,
+  ThunderboltOutlined,
 } from '@ant-design/icons';
 
 export interface MenuItem {
@@ -222,6 +226,55 @@ export const menuConfig: MenuItem[] = [
         label: '预约管理',
         icon: React.createElement(CalendarOutlined),
         path: '/counseling/appointment',
+      },
+    ],
+  },
+  {
+    key: 'patrol',
+    label: '排查走访管理',
+    icon: React.createElement(SearchOutlined),
+    children: [
+      {
+        key: 'patrol-task',
+        label: '排查任务管理',
+        icon: React.createElement(FileTextOutlined),
+        path: '/patrol/task',
+      },
+      {
+        key: 'patrol-member',
+        label: '网格员管理',
+        icon: React.createElement(TeamOutlined),
+        path: '/patrol/member',
+      },
+      {
+        key: 'patrol-point-rule',
+        label: '积分规则配置',
+        icon: React.createElement(ThunderboltOutlined),
+        path: '/patrol/point/rule',
+      },
+      {
+        key: 'patrol-point-flow',
+        label: '积分流水查看',
+        icon: React.createElement(BarChartOutlined),
+        path: '/patrol/point/flow',
+      },
+      {
+        key: 'patrol-gift',
+        label: '礼品列表',
+        icon: React.createElement(GiftOutlined),
+        path: '/patrol/gift',
+      },
+      {
+        key: 'patrol-gift-category',
+        label: '礼品分类',
+        icon: React.createElement(SettingOutlined),
+        path: '/patrol/gift/category',
+      },
+      {
+        key: 'patrol-exchange',
+        label: '兑换订单管理',
+        icon: React.createElement(ShoppingOutlined),
+        path: '/patrol/exchange',
       },
     ],
   },

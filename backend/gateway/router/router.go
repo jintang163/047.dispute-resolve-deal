@@ -465,6 +465,85 @@ func RegisterRoutes(h *app.Hertz) {
 			ws.POST("/broadcast", handler.BroadcastNotification)
 		}
 
+		patrol := userAuth.Group("/patrol")
+		{
+			patrol.POST("/task", handler.CreatePatrolTask)
+			patrol.GET("/task", handler.GetPatrolTaskList)
+			patrol.GET("/task/:id", handler.GetPatrolTaskDetail)
+			patrol.PUT("/task/:id", handler.UpdatePatrolTask)
+			patrol.DELETE("/task/:id", handler.DeletePatrolTask)
+			patrol.POST("/task/:id/cancel", handler.CancelPatrolTask)
+			patrol.POST("/task/:id/start", handler.StartPatrolTask)
+			patrol.POST("/task/:id/complete", handler.CompletePatrolTask)
+			patrol.GET("/task/:taskId/points", handler.GetTaskPoints)
+
+			patrol.GET("/my/tasks", handler.GetMemberTasks)
+
+			patrol.POST("/route/plan", handler.PlanRoute)
+
+			patrol.POST("/checkin", handler.Checkin)
+			patrol.GET("/checkin/records", handler.GetCheckinRecords)
+			patrol.GET("/checkin/statistics", handler.GetCheckinStatistics)
+
+			patrol.POST("/visit", handler.CreateVisitRecord)
+			patrol.GET("/visit", handler.GetVisitRecords)
+			patrol.GET("/visit/:id", handler.GetVisitRecordDetail)
+			patrol.PUT("/visit/:id", handler.UpdateVisitRecord)
+			patrol.POST("/visit/:id/audit", handler.AuditVisitRecord)
+			patrol.DELETE("/visit/:id", handler.DeleteVisitRecord)
+			patrol.GET("/visit/statistics", handler.GetVisitStatistics)
+
+			patrol.POST("/danger", handler.ReportDanger)
+			patrol.GET("/danger", handler.GetDangerList)
+			patrol.GET("/danger/:id", handler.GetDangerDetail)
+			patrol.POST("/danger/:id/handle", handler.HandleDanger)
+			patrol.GET("/danger/statistics", handler.GetDangerStatistics)
+
+			patrol.GET("/member", handler.GetMemberList)
+			patrol.GET("/member/:id", handler.GetMemberDetail)
+			patrol.POST("/member", handler.CreateMember)
+			patrol.PUT("/member/:id", handler.UpdateMember)
+			patrol.DELETE("/member/:id", handler.DeleteMember)
+		}
+
+		points := userAuth.Group("/points")
+		{
+			points.GET("/summary", handler.GetPointsSummary)
+			points.POST("/add", handler.AddPoints)
+			points.POST("/deduct", handler.DeductPoints)
+			points.GET("/records", handler.GetPointsRecords)
+			points.GET("/rules", handler.GetPointsRules)
+			points.POST("/rules", handler.CreatePointsRule)
+			points.PUT("/rules/:id", handler.UpdatePointsRule)
+			points.DELETE("/rules/:id", handler.DeletePointsRule)
+			points.POST("/exchange", handler.ExchangeGift)
+			points.POST("/process-expired", handler.ProcessExpiredPoints)
+		}
+
+		gift := userAuth.Group("/gift")
+		{
+			gift.GET("", handler.GetGiftList)
+			gift.GET("/:id", handler.GetGiftDetail)
+			gift.POST("", handler.CreateGift)
+			gift.PUT("/:id", handler.UpdateGift)
+			gift.DELETE("/:id", handler.DeleteGift)
+
+			gift.GET("/categories", handler.GetGiftCategories)
+			gift.POST("/categories", handler.CreateGiftCategory)
+			gift.PUT("/categories/:id", handler.UpdateGiftCategory)
+			gift.DELETE("/categories/:id", handler.DeleteGiftCategory)
+
+			gift.GET("/exchange", handler.GetExchangeList)
+			gift.GET("/exchange/:id", handler.GetExchangeDetail)
+			gift.POST("/exchange/:id/audit", handler.AuditExchange)
+			gift.POST("/exchange/:id/ship", handler.ShipExchange)
+			gift.POST("/exchange/:id/receive", handler.ReceiveExchange)
+			gift.POST("/exchange/:id/cancel", handler.CancelExchange)
+			gift.GET("/my/exchanges", handler.GetMemberExchanges)
+
+			gift.GET("/statistics", handler.GetGiftStatistics)
+		}
+
 		system := userAuth.Group("/system", middleware.AdminRequiredMiddleware())
 		{
 			user := system.Group("/user")

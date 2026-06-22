@@ -31,6 +31,14 @@ import CaseLibraryCreate from './pages/CaseLibrary/Create';
 import CounselorList from './pages/Counseling/CounselorList';
 import AppointmentList from './pages/Counseling/AppointmentList';
 import ExportLogList from './pages/ExportLog/List';
+import PatrolTaskList from './pages/Patrol/TaskList';
+import PatrolTaskDetail from './pages/Patrol/TaskDetail';
+import PatrolGridMemberList from './pages/Patrol/GridMemberList';
+import PatrolPointRule from './pages/Patrol/PointRule';
+import PatrolPointFlow from './pages/Patrol/PointFlow';
+import PatrolGiftList from './pages/Patrol/GiftList';
+import PatrolGiftCategory from './pages/Patrol/GiftCategory';
+import PatrolExchangeOrderList from './pages/Patrol/ExchangeOrderList';
 import { getToken } from './utils/auth';
 import { useUserStore } from './stores/user';
 
@@ -135,6 +143,24 @@ const App: React.FC = () => {
           </Route>
           <Route path="export">
             <Route path="log" element={<ExportLogList />} />
+          </Route>
+          <Route path="patrol">
+            <Route index element={<Navigate to="/patrol/task" replace />} />
+            <Route path="task">
+              <Route index element={<PatrolTaskList />} />
+              <Route path=":id" element={<PatrolTaskDetail />} />
+            </Route>
+            <Route path="member" element={<PatrolGridMemberList />} />
+            <Route path="point">
+              <Route index element={<Navigate to="/patrol/point/rule" replace />} />
+              <Route path="rule" element={<PatrolPointRule />} />
+              <Route path="flow" element={<PatrolPointFlow />} />
+            </Route>
+            <Route path="gift">
+              <Route index element={<PatrolGiftList />} />
+              <Route path="category" element={<PatrolGiftCategory />} />
+            </Route>
+            <Route path="exchange" element={<PatrolExchangeOrderList />} />
           </Route>
         </Route>
         <Route path="*" element={<Navigate to="/dashboard" replace />} />

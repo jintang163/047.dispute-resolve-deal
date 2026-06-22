@@ -19,8 +19,18 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.dispute.app.model.Case
+import com.dispute.app.model.Gift
+import com.dispute.app.model.GiftCategory
+import com.dispute.app.model.GiftExchangeRecord
+import com.dispute.app.model.GridTask
+import com.dispute.app.model.GridWorker
+import com.dispute.app.model.HazardReport
 import com.dispute.app.model.JudicialConfirmation
+import com.dispute.app.model.PointRecord
+import com.dispute.app.model.PointRule
+import com.dispute.app.model.TaskPoint
 import com.dispute.app.model.User
+import com.dispute.app.model.VisitRecord
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -56,6 +66,48 @@ class AppState {
 
     private val _judicialStatusFilter = mutableStateOf<JudicialConfirmation.Status?>(null)
     val judicialStatusFilter: State<JudicialConfirmation.Status?> = _judicialStatusFilter
+
+    private val _gridWorker = mutableStateOf<GridWorker?>(null)
+    val gridWorker: State<GridWorker?> = _gridWorker
+
+    private val _gridTaskList = mutableStateOf<List<GridTask>>(emptyList())
+    val gridTaskList: State<List<GridTask>> = _gridTaskList
+
+    private val _selectedGridTask = mutableStateOf<GridTask?>(null)
+    val selectedGridTask: State<GridTask?> = _selectedGridTask
+
+    private val _gridTaskStatusFilter = mutableStateOf<GridTask.TaskStatus?>(null)
+    val gridTaskStatusFilter: State<GridTask.TaskStatus?> = _gridTaskStatusFilter
+
+    private val _visitRecordList = mutableStateOf<List<VisitRecord>>(emptyList())
+    val visitRecordList: State<List<VisitRecord>> = _visitRecordList
+
+    private val _hazardReportList = mutableStateOf<List<HazardReport>>(emptyList())
+    val hazardReportList: State<List<HazardReport>> = _hazardReportList
+
+    private val _pointRecordList = mutableStateOf<List<PointRecord>>(emptyList())
+    val pointRecordList: State<List<PointRecord>> = _pointRecordList
+
+    private val _pointRuleList = mutableStateOf<List<PointRule>>(emptyList())
+    val pointRuleList: State<List<PointRule>> = _pointRuleList
+
+    private val _giftCategoryList = mutableStateOf<List<GiftCategory>>(emptyList())
+    val giftCategoryList: State<List<GiftCategory>> = _giftCategoryList
+
+    private val _giftList = mutableStateOf<List<Gift>>(emptyList())
+    val giftList: State<List<Gift>> = _giftList
+
+    private val _selectedGift = mutableStateOf<Gift?>(null)
+    val selectedGift: State<Gift?> = _selectedGift
+
+    private val _giftCategoryFilter = mutableStateOf<String?>(null)
+    val giftCategoryFilter: State<String?> = _giftCategoryFilter
+
+    private val _exchangeRecordList = mutableStateOf<List<GiftExchangeRecord>>(emptyList())
+    val exchangeRecordList: State<List<GiftExchangeRecord>> = _exchangeRecordList
+
+    private val _checkInPoint = mutableStateOf<TaskPoint?>(null)
+    val checkInPoint: State<TaskPoint?> = _checkInPoint
 
     val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 
@@ -149,6 +201,113 @@ class AppState {
         _toastMessage.value = null
     }
 
+    fun setGridWorker(worker: GridWorker?) {
+        _gridWorker.value = worker
+    }
+
+    fun setGridTaskList(tasks: List<GridTask>) {
+        _gridTaskList.value = tasks
+    }
+
+    fun addGridTask(task: GridTask) {
+        _gridTaskList.value = listOf(task) + _gridTaskList.value
+    }
+
+    fun updateGridTask(taskId: String, update: (GridTask) -> GridTask) {
+        _gridTaskList.value = _gridTaskList.value.map {
+            if (it.id == taskId) update(it) else it
+        }
+        _selectedGridTask.value?.let {
+            if (it.id == taskId) {
+                _selectedGridTask.value = update(it)
+            }
+        }
+    }
+
+    fun setSelectedGridTask(task: GridTask?) {
+        _selectedGridTask.value = task
+    }
+
+    fun setGridTaskStatusFilter(status: GridTask.TaskStatus?) {
+        _gridTaskStatusFilter.value = status
+    }
+
+    fun findGridTask(taskId: String): GridTask? {
+        return _gridTaskList.value.find { it.id == taskId }
+            ?: _selectedGridTask.value?.takeIf { it.id == taskId }
+    }
+
+    fun setVisitRecordList(records: List<VisitRecord>) {
+        _visitRecordList.value = records
+    }
+
+    fun addVisitRecord(record: VisitRecord) {
+        _visitRecordList.value = listOf(record) + _visitRecordList.value
+    }
+
+    fun setHazardReportList(reports: List<HazardReport>) {
+        _hazardReportList.value = reports
+    }
+
+    fun addHazardReport(report: HazardReport) {
+        _hazardReportList.value = listOf(report) + _hazardReportList.value
+    }
+
+    fun setPointRecordList(records: List<PointRecord>) {
+        _pointRecordList.value = records
+    }
+
+    fun setPointRuleList(rules: List<PointRule>) {
+        _pointRuleList.value = rules
+    }
+
+    fun setGiftCategoryList(categories: List<GiftCategory>) {
+        _giftCategoryList.value = categories
+    }
+
+    fun setGiftList(gifts: List<Gift>) {
+        _giftList.value = gifts
+    }
+
+    fun setSelectedGift(gift: Gift?) {
+        _selectedGift.value = gift
+    }
+
+    fun setGiftCategoryFilter(categoryId: String?) {
+        _giftCategoryFilter.value = categoryId
+    }
+
+    fun findGift(giftId: String): Gift? {
+        return _giftList.value.find { it.id == giftId }
+            ?: _selectedGift.value?.takeIf { it.id == giftId }
+    }
+
+    fun setExchangeRecordList(records: List<GiftExchangeRecord>) {
+        _exchangeRecordList.value = records
+    }
+
+    fun addExchangeRecord(record: GiftExchangeRecord) {
+        _exchangeRecordList.value = listOf(record) + _exchangeRecordList.value
+    }
+
+    fun setCheckInPoint(point: TaskPoint?) {
+        _checkInPoint.value = point
+    }
+
+    fun updateCheckInPoint(pointId: String, update: (TaskPoint) -> TaskPoint) {
+        _checkInPoint.value?.let {
+            if (it.id == pointId) {
+                _checkInPoint.value = update(it)
+            }
+        }
+        _selectedGridTask.value?.let { task ->
+            val updatedPoints = task.pointList.map { point ->
+                if (point.id == pointId) update(point) else point
+            }
+            _selectedGridTask.value = task.copy(pointList = updatedPoints)
+        }
+    }
+
     fun isLoggedIn(): Boolean = _currentUser.value != null
 
     fun logout() {
@@ -160,6 +319,20 @@ class AppState {
         _judicialList.value = emptyList()
         _selectedJudicial.value = null
         _judicialStatusFilter.value = null
+        _gridWorker.value = null
+        _gridTaskList.value = emptyList()
+        _selectedGridTask.value = null
+        _gridTaskStatusFilter.value = null
+        _visitRecordList.value = emptyList()
+        _hazardReportList.value = emptyList()
+        _pointRecordList.value = emptyList()
+        _pointRuleList.value = emptyList()
+        _giftCategoryList.value = emptyList()
+        _giftList.value = emptyList()
+        _selectedGift.value = null
+        _giftCategoryFilter.value = null
+        _exchangeRecordList.value = emptyList()
+        _checkInPoint.value = null
     }
 
     fun setJudicialList(list: List<JudicialConfirmation>) {

@@ -56,6 +56,7 @@ class ApiClient(
     val user = UserApi(this)
     val ai = AIApi(this)
     val voice = VoiceApi(this)
+    val gridWorker = GridWorkerApi(this)
 
     fun baseUrl(): String = config.baseUrl
 

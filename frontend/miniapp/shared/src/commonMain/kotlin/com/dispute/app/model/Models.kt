@@ -576,3 +576,696 @@ data class ReceiptQRCodeResult(
     val miniAppUrl: String? = null,
     val expiredAt: String
 )
+
+@Serializable
+data class GridWorker(
+    val id: String,
+    val userId: String,
+    val realName: String,
+    val phone: String,
+    val gridCode: String,
+    val gridName: String,
+    val area: String? = null,
+    val avatar: String? = null,
+    val level: String = "初级网格员",
+    val points: Int = 0,
+    val totalTasks: Int = 0,
+    val completedTasks: Int = 0,
+    val joinDate: String? = null
+)
+
+@Serializable
+data class GridTask(
+    val id: String,
+    val taskNo: String,
+    val title: String,
+    val description: String,
+    val type: TaskType,
+    val status: TaskStatus,
+    val priority: TaskPriority,
+    val gridCode: String,
+    val gridName: String,
+    val assignedTo: String? = null,
+    val assignedName: String? = null,
+    val pointList: List<TaskPoint> = emptyList(),
+    val deadline: String? = null,
+    val expectedPoints: Int = 10,
+    val createTime: String,
+    val updateTime: String? = null,
+    val remark: String? = null
+) {
+    enum class TaskType(val displayName: String) {
+        PATROL("日常巡逻"),
+        DISPUTE("纠纷调解"),
+        INSPECTION("安全检查"),
+        VISIT("入户走访"),
+        HAZARD("隐患排查"),
+        PUBLICITY("政策宣传"),
+        OTHER("其他任务")
+    }
+
+    enum class TaskStatus(val displayName: String, val color: Long) {
+        PENDING("待执行", 0xFFF59E0B),
+        IN_PROGRESS("进行中", 0xFF1D6CFF),
+        COMPLETED("已完成", 0xFF22C55E),
+        CANCELLED("已取消", 0xFF9CA3AF)
+    }
+
+    enum class TaskPriority(val displayName: String, val color: Long) {
+        LOW("普通", 0xFF9CA3AF),
+        NORMAL("一般", 0xFF1D6CFF),
+        HIGH("紧急", 0xFFF59E0B),
+        URGENT("特急", 0xFFEF4444)
+    }
+
+    val statusColor: Long
+        get() = status.color
+
+    val priorityColor: Long
+        get() = priority.color
+}
+
+@Serializable
+data class TaskPoint(
+    val id: String,
+    val taskId: String,
+    val name: String,
+    val address: String,
+    val longitude: Double,
+    val latitude: Double,
+    val sortOrder: Int = 0,
+    val checkInStatus: CheckInStatus = CheckInStatus.PENDING,
+    val checkInTime: String? = null,
+    val checkInPhoto: String? = null,
+    val remark: String? = null
+) {
+    enum class CheckInStatus(val displayName: String) {
+        PENDING("未签到"),
+        CHECKED_IN("已签到"),
+        SKIPPED("已跳过")
+    }
+}
+
+@Serializable
+data class CheckInRecord(
+    val id: String,
+    val taskId: String,
+    val pointId: String,
+    val gridWorkerId: String,
+    val checkInTime: String,
+    val longitude: Double,
+    val latitude: Double,
+    val address: String,
+    val photoUrl: String? = null,
+    val livenessVerified: Boolean = false,
+    val remark: String? = null
+)
+
+@Serializable
+data class VisitRecord(
+    val id: String,
+    val visitNo: String,
+    val gridWorkerId: String,
+    val residentName: String,
+    val residentPhone: String? = null,
+    val residentAddress: String,
+    val visitType: VisitType,
+    val visitContent: String,
+    val visitResult: String? = null,
+    val photoUrls: List<String> = emptyList(),
+    val longitude: Double? = null,
+    val latitude: Double? = null,
+    val createTime: String,
+    val updateTime: String? = null
+) {
+    enum class VisitType(val displayName: String) {
+        REGULAR("常规走访"),
+        DISPUTE("纠纷回访"),
+        HELP("帮扶走访"),
+        SPECIAL("特殊群体走访"),
+        INVESTIGATION("问卷调查"),
+        OTHER("其他")
+    }
+}
+
+@Serializable
+data class HazardReport(
+    val id: String,
+    val reportNo: String,
+    val reporterId: String,
+    val reporterName: String,
+    val type: HazardType,
+    val level: HazardLevel,
+    val title: String,
+    val description: String,
+    val address: String,
+    val longitude: Double? = null,
+    val latitude: Double? = null,
+    val photoUrls: List<String> = emptyList(),
+    val status: ReportStatus = ReportStatus.PENDING,
+    val handlerId: String? = null,
+    val handlerName: String? = null,
+    val handleResult: String? = null,
+    val handleTime: String? = null,
+    val createTime: String,
+    val updateTime: String? = null
+) {
+    enum class HazardType(val displayName: String) {
+        FIRE("消防安全"),
+        TRAFFIC("交通安全"),
+        PUBLIC("公共安全"),
+        ENVIRONMENT("环境卫生"),
+        FACILITY("设施损坏"),
+        DISPUTE("矛盾纠纷"),
+        OTHER("其他隐患")
+    }
+
+    enum class HazardLevel(val displayName: String, val color: Long) {
+        LOW("一般", 0xFF22C55E),
+        MEDIUM("较大", 0xFFF59E0B),
+        HIGH("重大", 0xFFEF4444),
+        EXTREME("特别重大", 0xFF7C0000)
+    }
+
+    enum class ReportStatus(val displayName: String) {
+        PENDING("待处理"),
+        PROCESSING("处理中"),
+        RESOLVED("已解决"),
+        CLOSED("已关闭")
+    }
+}
+
+@Serializable
+data class PointRecord(
+    val id: String,
+    val gridWorkerId: String,
+    val type: PointType,
+    val amount: Int,
+    val balance: Int,
+    val description: String,
+    val relatedId: String? = null,
+    val relatedType: String? = null,
+    val createTime: String
+) {
+    enum class PointType(val displayName: String, val isIncome: Boolean) {
+        TASK_COMPLETE("完成任务", true),
+        CHECK_IN("签到奖励", true),
+        VISIT("走访奖励", true),
+        HAZARD_REPORT("隐患上报", true),
+        EXCHANGE("礼品兑换", false),
+        DEDUCT("积分扣除", false);
+
+        val sign: String
+            get() = if (isIncome) "+" else "-"
+    }
+}
+
+@Serializable
+data class PointRule(
+    val id: String,
+    val name: String,
+    val description: String,
+    val type: String,
+    val points: Int,
+    val maxDaily: Int? = null,
+    val sortOrder: Int = 0
+)
+
+@Serializable
+data class GiftCategory(
+    val id: String,
+    val name: String,
+    val icon: String? = null,
+    val sortOrder: Int = 0
+)
+
+@Serializable
+data class Gift(
+    val id: String,
+    val name: String,
+    val categoryId: String,
+    val categoryName: String,
+    val description: String,
+    val points: Int,
+    val originalPrice: Double? = null,
+    val imageUrl: String? = null,
+    val stock: Int = 0,
+    val salesCount: Int = 0,
+    val isHot: Boolean = false,
+    val isNew: Boolean = false,
+    val status: GiftStatus = GiftStatus.ON_SALE
+) {
+    enum class GiftStatus {
+        ON_SALE, OFF_SALE, SOLD_OUT
+    }
+}
+
+@Serializable
+data class GiftExchangeRecord(
+    val id: String,
+    val exchangeNo: String,
+    val gridWorkerId: String,
+    val giftId: String,
+    val giftName: String,
+    val giftImage: String? = null,
+    val points: Int,
+    val quantity: Int = 1,
+    val status: ExchangeStatus = ExchangeStatus.PENDING,
+    val receiverName: String? = null,
+    val receiverPhone: String? = null,
+    val receiverAddress: String? = null,
+    val logisticsNo: String? = null,
+    val logisticsCompany: String? = null,
+    val createTime: String,
+    val updateTime: String? = null
+) {
+    enum class ExchangeStatus(val displayName: String) {
+        PENDING("待发货"),
+        SHIPPED("已发货"),
+        DELIVERED("已收货"),
+        CANCELLED("已取消")
+    }
+}
+
+@Serializable
+data class MapRoute(
+    val distance: Double,
+    val duration: Int,
+    val startPoint: TaskPoint,
+    val endPoint: TaskPoint,
+    val wayPoints: List<TaskPoint> = emptyList(),
+    val polyline: String? = null
+)
+
+object GridWorkerMockData {
+    val mockGridWorker = GridWorker(
+        id = "gw001",
+        userId = "user001",
+        realName = "李网格",
+        phone = "13900139000",
+        gridCode = "GRID001",
+        gridName = "阳光社区第一网格",
+        area = "朝阳区",
+        level = "中级网格员",
+        points = 2580,
+        totalTasks = 156,
+        completedTasks = 142,
+        joinDate = "2023-01-15"
+    )
+
+    val mockTasks: List<GridTask> = listOf(
+        GridTask(
+            id = "task001",
+            taskNo = "RW202412010001",
+            title = "12月第一周日常巡逻",
+            description = "对网格内的重点区域进行日常巡逻，检查安全隐患",
+            type = GridTask.TaskType.PATROL,
+            status = GridTask.TaskStatus.PENDING,
+            priority = GridTask.TaskPriority.NORMAL,
+            gridCode = "GRID001",
+            gridName = "阳光社区第一网格",
+            expectedPoints = 20,
+            deadline = "2024-12-07 18:00:00",
+            createTime = "2024-12-01 09:00:00",
+            pointList = listOf(
+                TaskPoint(
+                    id = "p001",
+                    taskId = "task001",
+                    name = "阳光小区北门",
+                    address = "北京市朝阳区阳光路1号",
+                    longitude = 116.4074,
+                    latitude = 39.9042,
+                    sortOrder = 1
+                ),
+                TaskPoint(
+                    id = "p002",
+                    taskId = "task001",
+                    name = "阳光小区中心花园",
+                    address = "北京市朝阳区阳光路1号院内",
+                    longitude = 116.4084,
+                    latitude = 39.9052,
+                    sortOrder = 2
+                ),
+                TaskPoint(
+                    id = "p003",
+                    taskId = "task001",
+                    name = "阳光小区南门",
+                    address = "北京市朝阳区阳光路1号南门",
+                    longitude = 116.4094,
+                    latitude = 39.9062,
+                    sortOrder = 3
+                )
+            )
+        ),
+        GridTask(
+            id = "task002",
+            taskNo = "RW202412010002",
+            title = "张三与李四邻里纠纷调解",
+            description = "阳光小区3号楼2单元501和502住户因噪音问题产生纠纷，需要入户调解",
+            type = GridTask.TaskType.DISPUTE,
+            status = GridTask.TaskStatus.IN_PROGRESS,
+            priority = GridTask.TaskPriority.HIGH,
+            gridCode = "GRID001",
+            gridName = "阳光社区第一网格",
+            assignedTo = "gw001",
+            assignedName = "李网格",
+            expectedPoints = 50,
+            deadline = "2024-12-05 18:00:00",
+            createTime = "2024-12-02 10:30:00",
+            updateTime = "2024-12-02 14:00:00",
+            pointList = listOf(
+                TaskPoint(
+                    id = "p004",
+                    taskId = "task002",
+                    name = "阳光小区3号楼2单元501",
+                    address = "北京市朝阳区阳光路1号3号楼2单元501",
+                    longitude = 116.4064,
+                    latitude = 39.9032,
+                    sortOrder = 1,
+                    checkInStatus = TaskPoint.CheckInStatus.CHECKED_IN,
+                    checkInTime = "2024-12-02 15:00:00"
+                ),
+                TaskPoint(
+                    id = "p005",
+                    taskId = "task002",
+                    name = "阳光小区3号楼2单元502",
+                    address = "北京市朝阳区阳光路1号3号楼2单元502",
+                    longitude = 116.4065,
+                    latitude = 39.9033,
+                    sortOrder = 2
+                )
+            )
+        ),
+        GridTask(
+            id = "task003",
+            taskNo = "RW202411280003",
+            title = "冬季消防安全检查",
+            description = "对网格内商户进行消防安全专项检查",
+            type = GridTask.TaskType.INSPECTION,
+            status = GridTask.TaskStatus.COMPLETED,
+            priority = GridTask.TaskPriority.HIGH,
+            gridCode = "GRID001",
+            gridName = "阳光社区第一网格",
+            assignedTo = "gw001",
+            assignedName = "李网格",
+            expectedPoints = 30,
+            createTime = "2024-11-28 09:00:00",
+            updateTime = "2024-11-29 17:30:00",
+            pointList = listOf(
+                TaskPoint(
+                    id = "p006",
+                    taskId = "task003",
+                    name = "阳光便利店",
+                    address = "北京市朝阳区阳光路2号",
+                    longitude = 116.4054,
+                    latitude = 39.9022,
+                    sortOrder = 1,
+                    checkInStatus = TaskPoint.CheckInStatus.CHECKED_IN
+                ),
+                TaskPoint(
+                    id = "p007",
+                    taskId = "task003",
+                    name = "阳光餐厅",
+                    address = "北京市朝阳区阳光路3号",
+                    longitude = 116.4044,
+                    latitude = 39.9012,
+                    sortOrder = 2,
+                    checkInStatus = TaskPoint.CheckInStatus.CHECKED_IN
+                )
+            )
+        ),
+        GridTask(
+            id = "task004",
+            taskNo = "RW202412030004",
+            title = "独居老人入户走访",
+            description = "对网格内5户独居老人进行走访慰问，了解生活状况",
+            type = GridTask.TaskType.VISIT,
+            status = GridTask.TaskStatus.PENDING,
+            priority = GridTask.TaskPriority.NORMAL,
+            gridCode = "GRID001",
+            gridName = "阳光社区第一网格",
+            expectedPoints = 25,
+            deadline = "2024-12-10 18:00:00",
+            createTime = "2024-12-03 08:30:00",
+            pointList = listOf(
+                TaskPoint(
+                    id = "p008",
+                    taskId = "task004",
+                    name = "王奶奶家",
+                    address = "北京市朝阳区阳光路1号1号楼1单元101",
+                    longitude = 116.4034,
+                    latitude = 39.9002,
+                    sortOrder = 1
+                ),
+                TaskPoint(
+                    id = "p009",
+                    taskId = "task004",
+                    name = "李爷爷家",
+                    address = "北京市朝阳区阳光路1号2号楼3单元202",
+                    longitude = 116.4024,
+                    latitude = 39.8992,
+                    sortOrder = 2
+                )
+            )
+        )
+    )
+
+    val mockVisitRecords: List<VisitRecord> = listOf(
+        VisitRecord(
+            id = "visit001",
+            visitNo = "ZF202412010001",
+            gridWorkerId = "gw001",
+            residentName = "王奶奶",
+            residentPhone = "13800138001",
+            residentAddress = "阳光小区1号楼1单元101",
+            visitType = VisitRecord.VisitType.HELP,
+            visitContent = "了解老人生活情况，帮助购买生活用品",
+            visitResult = "老人身体状况良好，已帮助购买米、面、油等生活用品",
+            createTime = "2024-12-01 10:30:00"
+        ),
+        VisitRecord(
+            id = "visit002",
+            visitNo = "ZF202411280002",
+            gridWorkerId = "gw001",
+            residentName = "张三",
+            residentAddress = "阳光小区3号楼2单元501",
+            visitType = VisitRecord.VisitType.DISPUTE,
+            visitContent = "噪音纠纷调解后回访",
+            visitResult = "双方已达成谅解，邻里关系恢复正常",
+            createTime = "2024-11-28 15:00:00"
+        ),
+        VisitRecord(
+            id = "visit003",
+            visitNo = "ZF202411250003",
+            gridWorkerId = "gw001",
+            residentName = "赵大爷",
+            residentAddress = "阳光小区5号楼1单元303",
+            visitType = VisitRecord.VisitType.SPECIAL,
+            visitContent = "低保户季度走访",
+            createTime = "2024-11-25 14:00:00"
+        )
+    )
+
+    val mockHazardReports: List<HazardReport> = listOf(
+        HazardReport(
+            id = "hazard001",
+            reportNo = "YH202412020001",
+            reporterId = "gw001",
+            reporterName = "李网格",
+            type = HazardReport.HazardType.FIRE,
+            level = HazardReport.HazardLevel.MEDIUM,
+            title = "阳光小区2号楼消防通道堵塞",
+            description = "2号楼单元门口堆放大量杂物，堵塞消防通道，存在严重消防安全隐患",
+            address = "北京市朝阳区阳光路1号2号楼",
+            longitude = 116.4084,
+            latitude = 39.9042,
+            status = HazardReport.ReportStatus.PROCESSING,
+            handlerId = "admin001",
+            handlerName = "物业王经理",
+            handleResult = "已通知物业清理，预计3日内完成",
+            handleTime = "2024-12-02 16:00:00",
+            createTime = "2024-12-02 14:30:00"
+        ),
+        HazardReport(
+            id = "hazard002",
+            reportNo = "YH202411300002",
+            reporterId = "gw001",
+            reporterName = "李网格",
+            type = HazardReport.HazardType.FACILITY,
+            level = HazardReport.HazardLevel.LOW,
+            title = "健身器材损坏",
+            description = "小区中心花园的健身器材跑步机出现故障，存在安全隐患",
+            address = "北京市朝阳区阳光路1号中心花园",
+            status = HazardReport.ReportStatus.RESOLVED,
+            handlerId = "admin002",
+            handlerName = "社区刘主任",
+            handleResult = "已联系维修人员修复完成",
+            handleTime = "2024-12-01 10:00:00",
+            createTime = "2024-11-30 09:00:00"
+        )
+    )
+
+    val mockPointRecords: List<PointRecord> = listOf(
+        PointRecord(
+            id = "pt001",
+            gridWorkerId = "gw001",
+            type = PointRecord.PointType.TASK_COMPLETE,
+            amount = 30,
+            balance = 2580,
+            description = "完成任务：冬季消防安全检查",
+            relatedId = "task003",
+            relatedType = "TASK",
+            createTime = "2024-11-29 17:30:00"
+        ),
+        PointRecord(
+            id = "pt002",
+            gridWorkerId = "gw001",
+            type = PointRecord.PointType.CHECK_IN,
+            amount = 5,
+            balance = 2550,
+            description = "签到奖励：阳光小区北门",
+            relatedId = "p006",
+            relatedType = "CHECKIN",
+            createTime = "2024-11-29 09:00:00"
+        ),
+        PointRecord(
+            id = "pt003",
+            gridWorkerId = "gw001",
+            type = PointRecord.PointType.HAZARD_REPORT,
+            amount = 20,
+            balance = 2545,
+            description = "隐患上报：健身器材损坏",
+            relatedId = "hazard002",
+            relatedType = "HAZARD",
+            createTime = "2024-11-30 09:00:00"
+        ),
+        PointRecord(
+            id = "pt004",
+            gridWorkerId = "gw001",
+            type = PointRecord.PointType.EXCHANGE,
+            amount = 100,
+            balance = 2525,
+            description = "礼品兑换：5kg大米一袋",
+            relatedId = "exchange001",
+            relatedType = "EXCHANGE",
+            createTime = "2024-11-20 14:00:00"
+        )
+    )
+
+    val mockPointRules: List<PointRule> = listOf(
+        PointRule(id = "rule001", name = "完成日常任务", description = "每完成一个日常巡逻任务", type = "TASK", points = 20, sortOrder = 1),
+        PointRule(id = "rule002", name = "完成调解任务", description = "每完成一个纠纷调解任务", type = "TASK", points = 50, sortOrder = 2),
+        PointRule(id = "rule003", name = "完成检查任务", description = "每完成一个安全检查任务", type = "TASK", points = 30, sortOrder = 3),
+        PointRule(id = "rule004", name = "点位签到", description = "每个点位签到", type = "CHECKIN", points = 5, maxDaily = 20, sortOrder = 4),
+        PointRule(id = "rule005", name = "走访记录", description = "每条有效走访记录", type = "VISIT", points = 15, sortOrder = 5),
+        PointRule(id = "rule006", name = "隐患上报", description = "每条有效隐患上报", type = "HAZARD", points = 20, sortOrder = 6)
+    )
+
+    val mockGiftCategories: List<GiftCategory> = listOf(
+        GiftCategory(id = "cat001", name = "粮油食品", icon = "🍚", sortOrder = 1),
+        GiftCategory(id = "cat002", name = "生活用品", icon = "🧴", sortOrder = 2),
+        GiftCategory(id = "cat003", name = "家居用品", icon = "🏠", sortOrder = 3),
+        GiftCategory(id = "cat004", name = "电子产品", icon = "📱", sortOrder = 4),
+        GiftCategory(id = "cat005", name = "优惠券", icon = "🎫", sortOrder = 5)
+    )
+
+    val mockGifts: List<Gift> = listOf(
+        Gift(
+            id = "gift001",
+            name = "5kg大米一袋",
+            categoryId = "cat001",
+            categoryName = "粮油食品",
+            description = "东北优质大米，5kg装",
+            points = 100,
+            originalPrice = 35.0,
+            imageUrl = null,
+            stock = 50,
+            salesCount = 128,
+            isHot = true,
+            status = Gift.GiftStatus.ON_SALE
+        ),
+        Gift(
+            id = "gift002",
+            name = "1.8L食用油",
+            categoryId = "cat001",
+            categoryName = "粮油食品",
+            description = "非转基因大豆油，1.8L装",
+            points = 80,
+            originalPrice = 28.0,
+            stock = 60,
+            salesCount = 95,
+            status = Gift.GiftStatus.ON_SALE
+        ),
+        Gift(
+            id = "gift003",
+            name = "洗衣液2kg",
+            categoryId = "cat002",
+            categoryName = "生活用品",
+            description = "薰衣草香洗衣液，2kg装",
+            points = 60,
+            originalPrice = 20.0,
+            stock = 100,
+            salesCount = 200,
+            isNew = true,
+            status = Gift.GiftStatus.ON_SALE
+        ),
+        Gift(
+            id = "gift004",
+            name = "保温杯500ml",
+            categoryId = "cat003",
+            categoryName = "家居用品",
+            description = "304不锈钢保温杯，500ml",
+            points = 150,
+            originalPrice = 50.0,
+            stock = 30,
+            salesCount = 76,
+            isHot = true,
+            status = Gift.GiftStatus.ON_SALE
+        ),
+        Gift(
+            id = "gift005",
+            name = "蓝牙耳机",
+            categoryId = "cat004",
+            categoryName = "电子产品",
+            description = "无线蓝牙耳机，续航8小时",
+            points = 500,
+            originalPrice = 168.0,
+            stock = 10,
+            salesCount = 25,
+            isNew = true,
+            status = Gift.GiftStatus.ON_SALE
+        ),
+        Gift(
+            id = "gift006",
+            name = "超市优惠券20元",
+            categoryId = "cat005",
+            categoryName = "优惠券",
+            description = "华联超市20元代金券，满100可用",
+            points = 30,
+            originalPrice = 20.0,
+            stock = 200,
+            salesCount = 350,
+            status = Gift.GiftStatus.ON_SALE
+        )
+    )
+
+    val mockExchangeRecords: List<GiftExchangeRecord> = listOf(
+        GiftExchangeRecord(
+            id = "ex001",
+            exchangeNo = "DH202411200001",
+            gridWorkerId = "gw001",
+            giftId = "gift001",
+            giftName = "5kg大米一袋",
+            points = 100,
+            quantity = 1,
+            status = GiftExchangeRecord.ExchangeStatus.DELIVERED,
+            receiverName = "李网格",
+            receiverPhone = "13900139000",
+            receiverAddress = "北京市朝阳区阳光社区办公室",
+            logisticsNo = "SF1234567890",
+            logisticsCompany = "顺丰速运",
+            createTime = "2024-11-20 14:00:00",
+            updateTime = "2024-11-22 10:30:00"
+        )
+    )
+}
