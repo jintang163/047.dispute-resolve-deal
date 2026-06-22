@@ -848,14 +848,50 @@ data class GiftExchangeRecord(
 }
 
 @Serializable
-data class MapRoute(
-    val distance: Double,
-    val duration: Int,
-    val startPoint: TaskPoint,
-    val endPoint: TaskPoint,
-    val wayPoints: List<TaskPoint> = emptyList(),
-    val polyline: String? = null
+data class RoutePointInfo(
+    val originalIndex: Int,
+    val sortedIndex: Int,
+    val pointName: String,
+    val address: String,
+    val longitude: Double,
+    val latitude: Double,
+    val distanceFromPrev: Double = 0.0,
+    val durationFromPrev: Int = 0
 )
+
+@Serializable
+data class MapRoute(
+    val totalDistance: Double,
+    val totalDuration: Int,
+    val totalTaxiCost: Double = 0.0,
+    val strategy: Int = 10,
+    val strategyName: String = "速度优先(最近邻)",
+    val points: List<RoutePointInfo> = emptyList(),
+    val paths: List<Map<String, String>> = emptyList(),
+    val localOptimization: Boolean = true,
+    val amapAvailable: Boolean = false,
+    val amapError: String? = null
+) {
+    val distance: Double get() = totalDistance
+    val duration: Int get() = totalDuration
+
+    val formattedDistance: String
+        get() = when {
+            totalDistance >= 1000 -> "${String.format("%.2f", totalDistance / 1000)} 公里"
+            else -> "${String.format("%.0f", totalDistance)} 米"
+        }
+
+    val formattedDuration: String
+        get() {
+            val hours = totalDuration / 3600
+            val minutes = (totalDuration % 3600) / 60
+            return when {
+                hours > 0 -> "${hours}小时${minutes}分钟"
+                minutes > 0 -> "${minutes}分钟"
+                else -> "${totalDuration}秒"
+            }
+        }
+}
 
 object GridWorkerMockData {
     val mockGridWorker = GridWorker(

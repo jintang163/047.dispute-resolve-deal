@@ -43,19 +43,7 @@ import kotlinx.coroutines.launch
 import com.dispute.app.components.EmptyCard
 
 @Composable
-fun GridWorkerHomePage() {
-    val appState = androidx.compose.runtime.remember { com.dispute.app.AppState() }
-    val router = androidx.compose.runtime.remember { com.dispute.app.Router(appState) }
-    val apiClient = androidx.compose.runtime.remember { com.dispute.app.api.ApiClient() }
-
-    CompositionLocalProvider(
-        LocalAppState provides appState,
-        LocalRouter provides router,
-        LocalApiClient provides apiClient
-    ) {
-        GridWorkerHomeContent()
-    }
-}
+fun GridWorkerHomePage() = GridWorkerHomeContent()
 
 @Composable
 private fun GridWorkerHomeContent() {

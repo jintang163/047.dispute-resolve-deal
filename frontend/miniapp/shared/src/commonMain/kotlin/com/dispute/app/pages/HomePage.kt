@@ -40,19 +40,7 @@ import com.dispute.app.model.MockData
 import kotlinx.coroutines.launch
 
 @Composable
-fun HomePage() {
-    val appState = androidx.compose.runtime.remember { com.dispute.app.AppState() }
-    val router = androidx.compose.runtime.remember { com.dispute.app.Router(appState) }
-    val apiClient = androidx.compose.runtime.remember { com.dispute.app.api.ApiClient() }
-
-    CompositionLocalProvider(
-        LocalAppState provides appState,
-        LocalRouter provides router,
-        LocalApiClient provides apiClient
-    ) {
-        HomeContent()
-    }
-}
+fun HomePage() = HomeContent()
 
 @Composable
 private fun HomeContent() {
@@ -89,7 +77,8 @@ private fun HomeContent() {
                 onRegister = { router.navigate(Route.RegisterCase) },
                 onMyCases = { router.navigate(Route.CaseList) },
                 onProgress = { router.navigate(Route.Progress) },
-                onAIConsult = { router.navigate(Route.AIConsult) }
+                onAIConsult = { router.navigate(Route.AIConsult) },
+                onGridWorker = { router.navigate(Route.GridWorkerHome) }
             )
         }
 
@@ -206,13 +195,15 @@ private fun QuickActionsGrid(
     onRegister: () -> Unit,
     onMyCases: () -> Unit,
     onProgress: () -> Unit,
-    onAIConsult: () -> Unit
+    onAIConsult: () -> Unit,
+    onGridWorker: () -> Unit = {}
 ) {
     val actions = listOf(
         Triple("📝", "快速登记", onRegister),
         Triple("📋", "我的案件", onMyCases),
         Triple("🔍", "进度查询", onProgress),
-        Triple("🤖", "AI咨询", onAIConsult)
+        Triple("🤖", "AI咨询", onAIConsult),
+        Triple("👮", "网格员", onGridWorker)
     )
 
     androidx.compose.foundation.layout.Column(

@@ -40,17 +40,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.foundation.lazy.items
 
 @Composable
-fun JudicialDetailPage(id: Long) {
-    val appState = androidx.compose.runtime.remember { com.dispute.app.AppState() }
-    val router = androidx.compose.runtime.remember { com.dispute.app.Router(appState) }
-
-    CompositionLocalProvider(
-        LocalAppState provides appState,
-        LocalRouter provides router
-    ) {
-        JudicialDetailContent(id)
-    }
-}
+fun JudicialDetailPage(id: Long) = JudicialDetailContent(id)
 
 @Composable
 private fun JudicialDetailContent(id: Long) {

@@ -499,6 +499,7 @@ func RegisterRoutes(h *app.Hertz) {
 			patrol.POST("/danger/:id/handle", handler.HandleDanger)
 			patrol.GET("/danger/statistics", handler.GetDangerStatistics)
 
+			patrol.GET("/member/me", handler.GetMemberMe)
 			patrol.GET("/member", handler.GetMemberList)
 			patrol.GET("/member/:id", handler.GetMemberDetail)
 			patrol.POST("/member", handler.CreateMember)

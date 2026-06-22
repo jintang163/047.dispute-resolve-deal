@@ -370,10 +370,11 @@ var CaseLevelMap = map[int]string{
 }
 
 var RoleMap = map[int]string{
-	RoleDirector: "主任",
-	RoleLeader:   "组长",
-	RoleMediator: "调解员",
-	RoleAdmin:    "管理员",
+	RoleDirector:   "主任",
+	RoleLeader:     "组长",
+	RoleMediator:   "调解员",
+	RoleAdmin:      "管理员",
+	RoleGridMember: "网格员",
 }
 
 var ApprovalActionMap = map[int]string{

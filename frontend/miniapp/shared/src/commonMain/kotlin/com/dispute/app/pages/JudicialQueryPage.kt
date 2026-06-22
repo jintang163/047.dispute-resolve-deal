@@ -35,17 +35,7 @@ import com.dispute.app.components.TopBarWithBackList
 import androidx.compose.runtime.LaunchedEffect
 
 @Composable
-fun JudicialQueryPage() {
-    val appState = androidx.compose.runtime.remember { com.dispute.app.AppState() }
-    val router = androidx.compose.runtime.remember { com.dispute.app.Router(appState) }
-
-    CompositionLocalProvider(
-        LocalAppState provides appState,
-        LocalRouter provides router
-    ) {
-        JudicialQueryContent()
-    }
-}
+fun JudicialQueryPage() = JudicialQueryContent()
 
 @Composable
 private fun JudicialQueryContent() {

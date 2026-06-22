@@ -70,7 +70,9 @@ func GetGiftList(ctx context.Context, c *app.RequestContext) {
 		return
 	}
 
-	c.JSON(http.StatusOK, response.Page(list, total))
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	pageSize, _ := strconv.Atoi(c.DefaultQuery("pageSize", "20"))
+	c.JSON(http.StatusOK, response.Page(list, total, page, pageSize))
 }
 
 func GetGiftDetail(ctx context.Context, c *app.RequestContext) {
@@ -97,7 +99,7 @@ func CreateGift(ctx context.Context, c *app.RequestContext) {
 	}
 
 	userInfo := middleware.GetUserInfo(c)
-	if userInfo.Role > constants.RoleLeader {
+	if userInfo.Role != constants.RoleAdmin && userInfo.Role != constants.RoleDirector && userInfo.Role != constants.RoleLeader {
 		c.JSON(http.StatusForbidden, response.Forbidden("无权限添加礼品"))
 		return
 	}
@@ -125,7 +127,7 @@ func UpdateGift(ctx context.Context, c *app.RequestContext) {
 	}
 
 	userInfo := middleware.GetUserInfo(c)
-	if userInfo.Role > constants.RoleLeader {
+	if userInfo.Role != constants.RoleAdmin && userInfo.Role != constants.RoleDirector && userInfo.Role != constants.RoleLeader {
 		c.JSON(http.StatusForbidden, response.Forbidden("无权限编辑礼品"))
 		return
 	}
@@ -147,7 +149,7 @@ func DeleteGift(ctx context.Context, c *app.RequestContext) {
 	}
 
 	userInfo := middleware.GetUserInfo(c)
-	if userInfo.Role > constants.RoleLeader {
+	if userInfo.Role != constants.RoleAdmin && userInfo.Role != constants.RoleDirector && userInfo.Role != constants.RoleLeader {
 		c.JSON(http.StatusForbidden, response.Forbidden("无权限删除礼品"))
 		return
 	}
@@ -179,7 +181,7 @@ func CreateGiftCategory(ctx context.Context, c *app.RequestContext) {
 	}
 
 	userInfo := middleware.GetUserInfo(c)
-	if userInfo.Role > constants.RoleLeader {
+	if userInfo.Role != constants.RoleAdmin && userInfo.Role != constants.RoleDirector && userInfo.Role != constants.RoleLeader {
 		c.JSON(http.StatusForbidden, response.Forbidden("无权限添加分类"))
 		return
 	}
@@ -207,7 +209,7 @@ func UpdateGiftCategory(ctx context.Context, c *app.RequestContext) {
 	}
 
 	userInfo := middleware.GetUserInfo(c)
-	if userInfo.Role > constants.RoleLeader {
+	if userInfo.Role != constants.RoleAdmin && userInfo.Role != constants.RoleDirector && userInfo.Role != constants.RoleLeader {
 		c.JSON(http.StatusForbidden, response.Forbidden("无权限编辑分类"))
 		return
 	}
@@ -229,7 +231,7 @@ func DeleteGiftCategory(ctx context.Context, c *app.RequestContext) {
 	}
 
 	userInfo := middleware.GetUserInfo(c)
-	if userInfo.Role > constants.RoleLeader {
+	if userInfo.Role != constants.RoleAdmin && userInfo.Role != constants.RoleDirector && userInfo.Role != constants.RoleLeader {
 		c.JSON(http.StatusForbidden, response.Forbidden("无权限删除分类"))
 		return
 	}
@@ -292,7 +294,9 @@ func GetExchangeList(ctx context.Context, c *app.RequestContext) {
 		return
 	}
 
-	c.JSON(http.StatusOK, response.Page(list, total))
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	pageSize, _ := strconv.Atoi(c.DefaultQuery("pageSize", "20"))
+	c.JSON(http.StatusOK, response.Page(list, total, page, pageSize))
 }
 
 func GetExchangeDetail(ctx context.Context, c *app.RequestContext) {
@@ -328,7 +332,7 @@ func AuditExchange(ctx context.Context, c *app.RequestContext) {
 	}
 
 	userInfo := middleware.GetUserInfo(c)
-	if userInfo.Role > constants.RoleLeader {
+	if userInfo.Role != constants.RoleAdmin && userInfo.Role != constants.RoleDirector && userInfo.Role != constants.RoleLeader {
 		c.JSON(http.StatusForbidden, response.Forbidden("无权限审核"))
 		return
 	}
@@ -359,7 +363,7 @@ func ShipExchange(ctx context.Context, c *app.RequestContext) {
 	}
 
 	userInfo := middleware.GetUserInfo(c)
-	if userInfo.Role > constants.RoleLeader {
+	if userInfo.Role != constants.RoleAdmin && userInfo.Role != constants.RoleDirector && userInfo.Role != constants.RoleLeader {
 		c.JSON(http.StatusForbidden, response.Forbidden("无权限发货"))
 		return
 	}
@@ -431,7 +435,7 @@ func GetMemberExchanges(ctx context.Context, c *app.RequestContext) {
 		return
 	}
 
-	c.JSON(http.StatusOK, response.Page(list, total))
+	c.JSON(http.StatusOK, response.Page(list, total, page, pageSize))
 }
 
 func GetGiftStatistics(ctx context.Context, c *app.RequestContext) {

@@ -2,7 +2,7 @@ import axios, { AxiosInstance, AxiosRequestConfig, AxiosResponse, InternalAxiosR
 import { message } from 'antd';
 import { getToken, removeToken } from './auth';
 
-const baseURL = '/api';
+const baseURL = '/api/v1';
 
 const service: AxiosInstance = axios.create({
   baseURL,
@@ -37,7 +37,7 @@ service.interceptors.response.use(
       }
       return Promise.reject(new Error(res.message || res.msg || '请求失败'));
     }
-    return res;
+    return res.data;
   },
   (error) => {
     const status = error.response?.status;

@@ -39,17 +39,7 @@ import com.dispute.app.model.Case
 import com.dispute.app.model.MockData
 
 @Composable
-fun CaseListPage() {
-    val appState = androidx.compose.runtime.remember { com.dispute.app.AppState() }
-    val router = androidx.compose.runtime.remember { com.dispute.app.Router(appState) }
-
-    CompositionLocalProvider(
-        LocalAppState provides appState,
-        LocalRouter provides router
-    ) {
-        CaseListContent()
-    }
-}
+fun CaseListPage() = CaseListContent()
 
 @Composable
 private fun CaseListContent() {

@@ -49,19 +49,7 @@ import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toLocalDateTime
 
 @Composable
-fun VisitRecordAddPage() {
-    val appState = androidx.compose.runtime.remember { com.dispute.app.AppState() }
-    val router = androidx.compose.runtime.remember { com.dispute.app.Router(appState) }
-    val apiClient = androidx.compose.runtime.remember { com.dispute.app.api.ApiClient() }
-
-    CompositionLocalProvider(
-        LocalAppState provides appState,
-        LocalRouter provides router,
-        LocalApiClient provides apiClient
-    ) {
-        VisitRecordAddContent()
-    }
-}
+fun VisitRecordAddPage() = VisitRecordAddContent()
 
 @Composable
 private fun VisitRecordAddContent() {

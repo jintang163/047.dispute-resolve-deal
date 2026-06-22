@@ -63,19 +63,7 @@ private data class DraftCase(
 )
 
 @Composable
-fun RegisterCasePage() {
-    val appState = androidx.compose.runtime.remember { com.dispute.app.AppState() }
-    val router = androidx.compose.runtime.remember { com.dispute.app.Router(appState) }
-    val apiClient = androidx.compose.runtime.remember { com.dispute.app.api.ApiClient() }
-
-    CompositionLocalProvider(
-        LocalAppState provides appState,
-        LocalRouter provides router,
-        LocalApiClient provides apiClient
-    ) {
-        RegisterContent()
-    }
-}
+fun RegisterCasePage() = RegisterContent()
 
 @Composable
 private fun RegisterContent() {

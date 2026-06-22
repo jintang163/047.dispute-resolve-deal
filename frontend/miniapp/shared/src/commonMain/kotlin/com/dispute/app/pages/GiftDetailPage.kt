@@ -42,19 +42,7 @@ import com.dispute.app.model.GiftExchangeRecord
 import kotlinx.coroutines.launch
 
 @Composable
-fun GiftDetailPage() {
-    val appState = androidx.compose.runtime.remember { com.dispute.app.AppState() }
-    val router = androidx.compose.runtime.remember { com.dispute.app.Router(appState) }
-    val apiClient = androidx.compose.runtime.remember { com.dispute.app.api.ApiClient() }
-
-    CompositionLocalProvider(
-        LocalAppState provides appState,
-        LocalRouter provides router,
-        LocalApiClient provides apiClient
-    ) {
-        GiftDetailContent()
-    }
-}
+fun GiftDetailPage() = GiftDetailContent()
 
 @Composable
 private fun GiftDetailContent() {

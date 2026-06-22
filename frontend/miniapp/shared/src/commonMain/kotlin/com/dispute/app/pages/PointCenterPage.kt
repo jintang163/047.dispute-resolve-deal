@@ -43,19 +43,7 @@ import com.dispute.app.model.PointRule
 import kotlinx.coroutines.launch
 
 @Composable
-fun PointCenterPage() {
-    val appState = androidx.compose.runtime.remember { com.dispute.app.AppState() }
-    val router = androidx.compose.runtime.remember { com.dispute.app.Router(appState) }
-    val apiClient = androidx.compose.runtime.remember { com.dispute.app.api.ApiClient() }
-
-    CompositionLocalProvider(
-        LocalAppState provides appState,
-        LocalRouter provides router,
-        LocalApiClient provides apiClient
-    ) {
-        PointCenterContent()
-    }
-}
+fun PointCenterPage() = PointCenterContent()
 
 @Composable
 private fun PointCenterContent() {

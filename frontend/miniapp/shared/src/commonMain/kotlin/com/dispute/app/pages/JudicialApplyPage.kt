@@ -42,17 +42,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.runtime.LaunchedEffect
 
 @Composable
-fun JudicialApplyPage() {
-    val appState = androidx.compose.runtime.remember { com.dispute.app.AppState() }
-    val router = androidx.compose.runtime.remember { com.dispute.app.Router(appState) }
-
-    CompositionLocalProvider(
-        LocalAppState provides appState,
-        LocalRouter provides router
-    ) {
-        JudicialApplyContent()
-    }
-}
+fun JudicialApplyPage() = JudicialApplyContent()
 
 @Composable
 private fun JudicialApplyContent() {

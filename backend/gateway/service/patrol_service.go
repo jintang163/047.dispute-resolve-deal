@@ -31,6 +31,7 @@ type PatrolService interface {
 	GetDangerStatistics(ctx context.Context) (map[string]interface{}, error)
 	GetMemberList(ctx context.Context, query map[string]interface{}) ([]map[string]interface{}, int64, error)
 	GetMemberDetail(ctx context.Context, id int64) (map[string]interface{}, error)
+	GetMemberByUserID(ctx context.Context, userID int64) (map[string]interface{}, error)
 	CreateMember(ctx context.Context, req map[string]interface{}) (int64, error)
 	UpdateMember(ctx context.Context, id int64, req map[string]interface{}) error
 	DeleteMember(ctx context.Context, id int64) error

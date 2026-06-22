@@ -42,17 +42,7 @@ import com.dispute.app.model.MockData
 import kotlinx.coroutines.launch
 
 @Composable
-fun CaseDetailPage(caseNumber: String) {
-    val appState = androidx.compose.runtime.remember { com.dispute.app.AppState() }
-    val router = androidx.compose.runtime.remember { com.dispute.app.Router(appState) }
-
-    CompositionLocalProvider(
-        LocalAppState provides appState,
-        LocalRouter provides router
-    ) {
-        CaseDetailContent(caseNumber)
-    }
-}
+fun CaseDetailPage(caseNumber: String) = CaseDetailContent(caseNumber)
 
 @Composable
 private fun CaseDetailContent(caseNumber: String) {

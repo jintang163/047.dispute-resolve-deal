@@ -45,17 +45,7 @@ import com.dispute.app.model.MockData
 import kotlinx.coroutines.launch
 
 @Composable
-fun SatisfactionPage(caseNumber: String) {
-    val appState = androidx.compose.runtime.remember { com.dispute.app.AppState() }
-    val router = androidx.compose.runtime.remember { com.dispute.app.Router(appState) }
-
-    CompositionLocalProvider(
-        LocalAppState provides appState,
-        LocalRouter provides router
-    ) {
-        SatisfactionContent(caseNumber)
-    }
-}
+fun SatisfactionPage(caseNumber: String) = SatisfactionContent(caseNumber)
 
 @Composable
 private fun SatisfactionContent(caseNumber: String) {

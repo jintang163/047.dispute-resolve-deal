@@ -40,7 +40,7 @@ func AddPoints(ctx context.Context, c *app.RequestContext) {
 	}
 
 	userInfo := middleware.GetUserInfo(c)
-	if userInfo.Role > constants.RoleLeader {
+	if userInfo.Role != constants.RoleAdmin && userInfo.Role != constants.RoleDirector && userInfo.Role != constants.RoleLeader {
 		c.JSON(http.StatusForbidden, response.Forbidden("无权限发放积分"))
 		return
 	}
@@ -68,7 +68,7 @@ func DeductPoints(ctx context.Context, c *app.RequestContext) {
 	}
 
 	userInfo := middleware.GetUserInfo(c)
-	if userInfo.Role > constants.RoleLeader {
+	if userInfo.Role != constants.RoleAdmin && userInfo.Role != constants.RoleDirector && userInfo.Role != constants.RoleLeader {
 		c.JSON(http.StatusForbidden, response.Forbidden("无权限扣减积分"))
 		return
 	}
@@ -100,7 +100,7 @@ func GetPointsRecords(ctx context.Context, c *app.RequestContext) {
 		return
 	}
 
-	c.JSON(http.StatusOK, response.Page(records, total))
+	c.JSON(http.StatusOK, response.Page(records, total, page, pageSize))
 }
 
 func GetPointsRules(ctx context.Context, c *app.RequestContext) {

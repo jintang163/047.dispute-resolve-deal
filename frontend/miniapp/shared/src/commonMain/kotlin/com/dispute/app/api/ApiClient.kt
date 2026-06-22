@@ -25,6 +25,7 @@ expect fun createHttpClientEngine(): HttpClientEngine
 
 interface PlatformApiConfig {
     val baseUrl: String
+    val apiPrefix: String
     var authToken: String?
     var deviceId: String?
     var platform: String
@@ -125,7 +126,13 @@ class ApiClient(
 
     private fun buildUrl(path: String, parameters: Map<String, String?> = emptyMap()): String {
         val base = config.baseUrl.trimEnd('/')
-        val cleanPath = if (path.startsWith('/')) path else "/$path"
+        val prefix = config.apiPrefix.trimEnd('/')
+        val normalizedPath = if (path.startsWith('/')) path else "/$path"
+        val fullPath = if (normalizedPath.startsWith("/api/") || normalizedPath.startsWith("/api/v1/")) {
+            normalizedPath
+        } else {
+            "$prefix$normalizedPath"
+        }
         val queryString = parameters
             .filterValues { it != null }
             .entries
@@ -133,9 +140,9 @@ class ApiClient(
                 "$k=${v?.let { encodeUrlParam(it) }}"
             }
         return if (parameters.isNotEmpty() && queryString != "?") {
-            "$base$cleanPath$queryString"
+            "$base$fullPath$queryString"
         } else {
-            "$base$cleanPath"
+            "$base$fullPath"
         }
     }
 

@@ -70,6 +70,12 @@ class AppState {
     private val _gridWorker = mutableStateOf<GridWorker?>(null)
     val gridWorker: State<GridWorker?> = _gridWorker
 
+    private val _isGridWorker = mutableStateOf(false)
+    val isGridWorker: State<Boolean> = _isGridWorker
+
+    private val _memberId = mutableStateOf<String?>(null)
+    val memberId: State<String?> = _memberId
+
     private val _gridTaskList = mutableStateOf<List<GridTask>>(emptyList())
     val gridTaskList: State<List<GridTask>> = _gridTaskList
 
@@ -205,6 +211,27 @@ class AppState {
         _gridWorker.value = worker
     }
 
+    fun setGridWorkerInfo(worker: GridWorker?) {
+        if (worker != null) {
+            _gridWorker.value = worker
+            _isGridWorker.value = true
+            _memberId.value = worker.id
+        } else {
+            _gridWorker.value = null
+            _isGridWorker.value = false
+            _memberId.value = null
+        }
+    }
+
+    suspend fun loadCurrentGridWorker(apiClient: com.dispute.app.api.ApiClient) {
+        try {
+            val worker = apiClient.gridWorker.getCurrentMember()
+            setGridWorkerInfo(worker)
+        } catch (e: Exception) {
+            setGridWorkerInfo(null)
+        }
+    }
+
     fun setGridTaskList(tasks: List<GridTask>) {
         _gridTaskList.value = tasks
     }
@@ -320,6 +347,8 @@ class AppState {
         _selectedJudicial.value = null
         _judicialStatusFilter.value = null
         _gridWorker.value = null
+        _isGridWorker.value = false
+        _memberId.value = null
         _gridTaskList.value = emptyList()
         _selectedGridTask.value = null
         _gridTaskStatusFilter.value = null

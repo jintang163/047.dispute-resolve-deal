@@ -26,6 +26,17 @@ import com.dispute.app.pages.ProgressPage
 import com.dispute.app.pages.RegisterCasePage
 import com.dispute.app.pages.SatisfactionPage
 import com.dispute.app.api.ApiClient
+import com.dispute.app.pages.GridWorkerHomePage
+import com.dispute.app.pages.GridTaskListPage
+import com.dispute.app.pages.GridTaskDetailPage
+import com.dispute.app.pages.CheckInPage
+import com.dispute.app.pages.VisitRecordListPage
+import com.dispute.app.pages.VisitRecordAddPage
+import com.dispute.app.pages.HazardReportPage
+import com.dispute.app.pages.MapRoutePage
+import com.dispute.app.pages.PointCenterPage
+import com.dispute.app.pages.GiftMallPage
+import com.dispute.app.pages.GiftDetailPage
 
 val PrimaryColor = Color(0xFF1D6CFF)
 val PrimaryLightColor = Color(0xFF4D8CFF)
@@ -87,6 +98,14 @@ fun App() {
         }
     }
 
+    val apiClientRef = apiClient
+    val appStateRef = appState
+    LaunchedEffect(Unit) {
+        if (appStateRef.isLoggedIn()) {
+            appStateRef.loadCurrentGridWorker(apiClientRef)
+        }
+    }
+
     CompositionLocalProvider(
         LocalAppState provides appState,
         LocalRouter provides router,
@@ -120,6 +139,17 @@ private fun AppContent(router: Router, appState: AppState) {
         is Route.JudicialDetail -> JudicialDetailPage(currentRoute.id)
         is Route.JudicialApply -> JudicialApplyPage()
         is Route.JudicialQuery -> JudicialQueryPage()
+        is Route.GridWorkerHome -> GridWorkerHomePage()
+        is Route.GridTaskList -> GridTaskListPage()
+        is Route.GridTaskDetail -> GridTaskDetailPage(currentRoute.taskId)
+        is Route.CheckIn -> CheckInPage(currentRoute.taskId, currentRoute.pointId)
+        is Route.VisitRecordList -> VisitRecordListPage()
+        is Route.VisitRecordAdd -> VisitRecordAddPage()
+        is Route.HazardReport -> HazardReportPage()
+        is Route.MapRoute -> MapRoutePage(currentRoute.taskId)
+        is Route.PointCenter -> PointCenterPage()
+        is Route.GiftMall -> GiftMallPage()
+        is Route.GiftDetail -> GiftDetailPage(currentRoute.giftId)
     }
 
     if (appState.isLoading.value) {

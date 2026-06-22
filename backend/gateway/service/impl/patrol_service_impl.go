@@ -276,45 +276,113 @@ func (s *PatrolServiceImpl) CompleteTask(ctx context.Context, taskID int64, memb
 }
 
 func (s *PatrolServiceImpl) PlanRoute(ctx context.Context, startLng, startLat float64, points []map[string]interface{}, strategy int) (map[string]interface{}, error) {
-	amapClient := amap.GetAmapClient()
+	if strategy <= 0 || strategy > 13 {
+		strategy = 10
+	}
 
-	var routePoints []amap.OrderedRoutePoint
+	routePoints := make([]utils.RoutePoint, 0, len(points))
 	for i, p := range points {
-		routePoints = append(routePoints, amap.OrderedRoutePoint{
+		pointType := intOrDefault(p, "pointType", 1)
+		priority := intOrDefault(p, "priority", 3)
+		routePoints = append(routePoints, utils.RoutePoint{
 			Index:     i,
-			Longitude: p["longitude"].(float64),
-			Latitude:  p["latitude"].(float64),
+			Lng:       p["longitude"].(float64),
+			Lat:       p["latitude"].(float64),
 			Name:      p["pointName"].(string),
+			Priority:  priority,
+			PointType: pointType,
 		})
 	}
 
-	result, err := amapClient.PlanDrivingRoute(startLng, startLat, routePoints, strategy)
+	localResult := utils.OptimizeRoute(startLng, startLat, routePoints, strategy)
+
+	amapClient := amap.GetAmapClient()
+	var amapOrderedPoints []amap.OrderedRoutePoint
+	for sortedIdx, rp := range localResult.OrderedPoints {
+		amapOrderedPoints = append(amapOrderedPoints, amap.OrderedRoutePoint{
+			OriginalIndex: rp.Index,
+			SortedIndex:   sortedIdx,
+			Longitude:     rp.Lng,
+			Latitude:      rp.Lat,
+			Name:          rp.Name,
+			SortOrder:     sortedIdx + 1,
+		})
+	}
+
+	totalDuration := 0
+	var paths []amap.Path
+	amapErr := error(nil)
+
+	amapResult, err := amapClient.PlanDrivingRoute(startLng, startLat, amapOrderedPoints, 0)
 	if err != nil {
-		return nil, err
+		amapErr = err
+	} else {
+		totalDuration = amapResult.TotalDuration
+		paths = amapResult.Paths
+	}
+
+	orderedPoints := make([]map[string]interface{}, 0, len(localResult.OrderedPoints))
+	prevLng, prevLat := startLng, startLat
+	var distanceFromPrev float64
+
+	for sortedIdx, rp := range localResult.OrderedPoints {
+		originalPoint := points[rp.Index]
+
+		if sortedIdx == 0 {
+			distanceFromPrev = utils.HaversineDistance(prevLng, prevLat, rp.Lng, rp.Lat)
+		} else {
+			distanceFromPrev = utils.HaversineDistance(prevLng, prevLat, rp.Lng, rp.Lat)
+		}
+
+		durationFromPrev := 0
+		if amapResult != nil && sortedIdx < len(amapResult.OrderedPoints) {
+			durationFromPrev = amapResult.OrderedPoints[sortedIdx].Duration
+		}
+
+		orderedPoints = append(orderedPoints, map[string]interface{}{
+			"originalIndex":    rp.Index,
+			"sortedIndex":      sortedIdx,
+			"pointName":        originalPoint["pointName"],
+			"address":          originalPoint["address"],
+			"longitude":        rp.Lng,
+			"latitude":         rp.Lat,
+			"distanceFromPrev": distanceFromPrev,
+			"durationFromPrev": durationFromPrev,
+		})
+
+		prevLng, prevLat = rp.Lng, rp.Lat
+	}
+
+	totalDistance := localResult.TotalDistance
+	if amapResult != nil {
+		totalDistance = float64(amapResult.TotalDistance)
+	}
+	if totalDuration == 0 {
+		totalDuration = int(totalDistance / 1.39)
+	}
+
+	totalTaxiCost := 0.0
+	if totalDistance > 0 {
+		totalTaxiCost = 13.0 + (totalDistance/1000.0-3)*2.3
+		if totalTaxiCost < 13 {
+			totalTaxiCost = 13
+		}
 	}
 
 	routeMap := map[string]interface{}{
-		"totalDistance": result.TotalDistance,
-		"totalDuration": result.TotalDuration,
-		"totalTaxiCost": result.TotalTaxiCost,
-		"strategy":      strategy,
-		"strategyName":  getStrategyName(strategy),
-		"points":        make([]map[string]interface{}, 0),
-		"paths":         result.Paths,
+		"totalDistance":     totalDistance,
+		"totalDuration":     totalDuration,
+		"totalTaxiCost":     totalTaxiCost,
+		"strategy":          localResult.Strategy,
+		"strategyName":      localResult.StrategyName,
+		"points":            orderedPoints,
+		"paths":             paths,
+		"localOptimization": true,
+		"amapAvailable":     amapErr == nil,
 	}
 
-	for _, rp := range result.OrderedPoints {
-		originalPoint := points[rp.OriginalIndex]
-		routeMap["points"] = append(routeMap["points"].([]map[string]interface{}), map[string]interface{}{
-			"originalIndex": rp.OriginalIndex,
-			"sortedIndex":   rp.SortedIndex,
-			"pointName":     originalPoint["pointName"],
-			"address":       originalPoint["address"],
-			"longitude":     rp.Longitude,
-			"latitude":      rp.Latitude,
-			"distanceFromPrev": rp.DistanceFromPrev,
-			"durationFromPrev": rp.DurationFromPrev,
-		})
+	if amapErr != nil {
+		routeMap["amapError"] = amapErr.Error()
 	}
 
 	return routeMap, nil
@@ -865,6 +933,16 @@ func (s *PatrolServiceImpl) GetMemberDetail(ctx context.Context, id int64) (map[
 	return detail, result.Error
 }
 
+func (s *PatrolServiceImpl) GetMemberByUserID(ctx context.Context, userID int64) (map[string]interface{}, error) {
+	var detail map[string]interface{}
+	result := database.GetDB().Table("grid_member gm").
+		Select("gm.*, u.username, u.phone").
+		Joins("LEFT JOIN user u ON u.id = gm.user_id").
+		Where("gm.user_id = ? AND gm.status = 1", userID).
+		First(&detail)
+	return detail, result.Error
+}
+
 func (s *PatrolServiceImpl) CreateMember(ctx context.Context, req map[string]interface{}) (int64, error) {
 	memberNo := fmt.Sprintf("GM%s", utils.GenerateID())
 	member := model.GridMember{
@@ -975,9 +1053,15 @@ func getStrategyName(strategy int) string {
 	case 9:
 		return "躲避隧道"
 	case 10:
-		return "多策略"
+		return "速度优先(最近邻)"
+	case 11:
+		return "距离最短(贪心插入)"
+	case 12:
+		return "优先级优先"
+	case 13:
+		return "综合最优(加权)"
 	default:
-		return "速度优先"
+		return "速度优先(最近邻)"
 	}
 }
 

@@ -37,19 +37,7 @@ import com.dispute.app.model.GridWorkerMockData
 import com.dispute.app.model.TaskPoint
 
 @Composable
-fun GridTaskDetailPage() {
-    val appState = androidx.compose.runtime.remember { com.dispute.app.AppState() }
-    val router = androidx.compose.runtime.remember { com.dispute.app.Router(appState) }
-    val apiClient = androidx.compose.runtime.remember { com.dispute.app.api.ApiClient() }
-
-    CompositionLocalProvider(
-        LocalAppState provides appState,
-        LocalRouter provides router,
-        LocalApiClient provides apiClient
-    ) {
-        GridTaskDetailContent()
-    }
-}
+fun GridTaskDetailPage() = GridTaskDetailContent()
 
 @Composable
 private fun GridTaskDetailContent() {

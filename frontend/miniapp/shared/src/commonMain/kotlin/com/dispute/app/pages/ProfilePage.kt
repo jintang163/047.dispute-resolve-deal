@@ -42,17 +42,7 @@ import com.dispute.app.model.User
 import kotlinx.coroutines.launch
 
 @Composable
-fun ProfilePage() {
-    val appState = androidx.compose.runtime.remember { com.dispute.app.AppState() }
-    val router = androidx.compose.runtime.remember { com.dispute.app.Router(appState) }
-
-    CompositionLocalProvider(
-        LocalAppState provides appState,
-        LocalRouter provides router
-    ) {
-        ProfileContent()
-    }
-}
+fun ProfilePage() = ProfileContent()
 
 @Composable
 private fun ProfileContent() {

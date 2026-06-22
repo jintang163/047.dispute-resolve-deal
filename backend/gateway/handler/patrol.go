@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strconv"
 
@@ -10,6 +11,7 @@ import (
 	"github.com/dispute-resolve/common/response"
 	"github.com/dispute-resolve/gateway/middleware"
 	"github.com/dispute-resolve/gateway/service/impl"
+	"gorm.io/gorm"
 )
 
 var patrolService = impl.NewPatrolService()
@@ -22,7 +24,7 @@ func CreatePatrolTask(ctx context.Context, c *app.RequestContext) {
 	}
 
 	userInfo := middleware.GetUserInfo(c)
-	if userInfo.Role > constants.RoleLeader {
+	if userInfo.Role != constants.RoleAdmin && userInfo.Role != constants.RoleDirector && userInfo.Role != constants.RoleLeader {
 		c.JSON(http.StatusForbidden, response.Forbidden("无权限下发任务"))
 		return
 	}
@@ -78,13 +80,15 @@ func GetPatrolTaskList(ctx context.Context, c *app.RequestContext) {
 		}
 	}
 
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	pageSize, _ := strconv.Atoi(c.DefaultQuery("pageSize", "20"))
 	list, total, err := patrolService.GetTaskList(ctx, query)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, response.Error(err.Error()))
 		return
 	}
 
-	c.JSON(http.StatusOK, response.Page(list, total))
+	c.JSON(http.StatusOK, response.Page(list, total, page, pageSize))
 }
 
 func GetPatrolTaskDetail(ctx context.Context, c *app.RequestContext) {
@@ -117,7 +121,7 @@ func UpdatePatrolTask(ctx context.Context, c *app.RequestContext) {
 	}
 
 	userInfo := middleware.GetUserInfo(c)
-	if userInfo.Role > constants.RoleLeader {
+	if userInfo.Role != constants.RoleAdmin && userInfo.Role != constants.RoleDirector && userInfo.Role != constants.RoleLeader {
 		c.JSON(http.StatusForbidden, response.Forbidden("无权限编辑任务"))
 		return
 	}
@@ -139,7 +143,7 @@ func DeletePatrolTask(ctx context.Context, c *app.RequestContext) {
 	}
 
 	userInfo := middleware.GetUserInfo(c)
-	if userInfo.Role > constants.RoleLeader {
+	if userInfo.Role != constants.RoleAdmin && userInfo.Role != constants.RoleDirector && userInfo.Role != constants.RoleLeader {
 		c.JSON(http.StatusForbidden, response.Forbidden("无权限删除任务"))
 		return
 	}
@@ -169,7 +173,7 @@ func CancelPatrolTask(ctx context.Context, c *app.RequestContext) {
 	}
 
 	userInfo := middleware.GetUserInfo(c)
-	if userInfo.Role > constants.RoleLeader {
+	if userInfo.Role != constants.RoleAdmin && userInfo.Role != constants.RoleDirector && userInfo.Role != constants.RoleLeader {
 		c.JSON(http.StatusForbidden, response.Forbidden("无权限取消任务"))
 		return
 	}
@@ -266,7 +270,7 @@ func GetMemberTasks(ctx context.Context, c *app.RequestContext) {
 		return
 	}
 
-	c.JSON(http.StatusOK, response.Page(list, total))
+	c.JSON(http.StatusOK, response.Page(list, total, page, pageSize))
 }
 
 func GetTaskPoints(ctx context.Context, c *app.RequestContext) {
@@ -322,7 +326,7 @@ func GetCheckinRecords(ctx context.Context, c *app.RequestContext) {
 		return
 	}
 
-	c.JSON(http.StatusOK, response.Page(list, total))
+	c.JSON(http.StatusOK, response.Page(list, total, page, pageSize))
 }
 
 func GetCheckinStatistics(ctx context.Context, c *app.RequestContext) {
@@ -401,7 +405,9 @@ func GetVisitRecords(ctx context.Context, c *app.RequestContext) {
 		return
 	}
 
-	c.JSON(http.StatusOK, response.Page(list, total))
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	pageSize, _ := strconv.Atoi(c.DefaultQuery("pageSize", "20"))
+	c.JSON(http.StatusOK, response.Page(list, total, page, pageSize))
 }
 
 func GetVisitRecordDetail(ctx context.Context, c *app.RequestContext) {
@@ -459,7 +465,7 @@ func AuditVisitRecord(ctx context.Context, c *app.RequestContext) {
 	}
 
 	userInfo := middleware.GetUserInfo(c)
-	if userInfo.Role > constants.RoleLeader {
+	if userInfo.Role != constants.RoleAdmin && userInfo.Role != constants.RoleDirector && userInfo.Role != constants.RoleLeader {
 		c.JSON(http.StatusForbidden, response.Forbidden("无权限审核"))
 		return
 	}
@@ -567,7 +573,9 @@ func GetDangerList(ctx context.Context, c *app.RequestContext) {
 		return
 	}
 
-	c.JSON(http.StatusOK, response.Page(list, total))
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	pageSize, _ := strconv.Atoi(c.DefaultQuery("pageSize", "20"))
+	c.JSON(http.StatusOK, response.Page(list, total, page, pageSize))
 }
 
 func GetDangerDetail(ctx context.Context, c *app.RequestContext) {
@@ -656,7 +664,9 @@ func GetMemberList(ctx context.Context, c *app.RequestContext) {
 		return
 	}
 
-	c.JSON(http.StatusOK, response.Page(list, total))
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	pageSize, _ := strconv.Atoi(c.DefaultQuery("pageSize", "20"))
+	c.JSON(http.StatusOK, response.Page(list, total, page, pageSize))
 }
 
 func GetMemberDetail(ctx context.Context, c *app.RequestContext) {
@@ -683,7 +693,7 @@ func CreateMember(ctx context.Context, c *app.RequestContext) {
 	}
 
 	userInfo := middleware.GetUserInfo(c)
-	if userInfo.Role > constants.RoleLeader {
+	if userInfo.Role != constants.RoleAdmin && userInfo.Role != constants.RoleDirector && userInfo.Role != constants.RoleLeader {
 		c.JSON(http.StatusForbidden, response.Forbidden("无权限添加网格员"))
 		return
 	}
@@ -711,7 +721,7 @@ func UpdateMember(ctx context.Context, c *app.RequestContext) {
 	}
 
 	userInfo := middleware.GetUserInfo(c)
-	if userInfo.Role > constants.RoleLeader {
+	if userInfo.Role != constants.RoleAdmin && userInfo.Role != constants.RoleDirector && userInfo.Role != constants.RoleLeader {
 		c.JSON(http.StatusForbidden, response.Forbidden("无权限编辑网格员"))
 		return
 	}
@@ -733,7 +743,7 @@ func DeleteMember(ctx context.Context, c *app.RequestContext) {
 	}
 
 	userInfo := middleware.GetUserInfo(c)
-	if userInfo.Role > constants.RoleLeader {
+	if userInfo.Role != constants.RoleAdmin && userInfo.Role != constants.RoleDirector && userInfo.Role != constants.RoleLeader {
 		c.JSON(http.StatusForbidden, response.Forbidden("无权限删除网格员"))
 		return
 	}
@@ -745,4 +755,18 @@ func DeleteMember(ctx context.Context, c *app.RequestContext) {
 	}
 
 	c.JSON(http.StatusOK, response.Success(nil))
+}
+
+func GetMemberMe(ctx context.Context, c *app.RequestContext) {
+	userInfo := middleware.GetUserInfo(c)
+	detail, err := patrolService.GetMemberByUserID(ctx, userInfo.UserID)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			c.JSON(http.StatusOK, response.Success(nil))
+			return
+		}
+		c.JSON(http.StatusInternalServerError, response.Error(err.Error()))
+		return
+	}
+	c.JSON(http.StatusOK, response.Success(detail))
 }

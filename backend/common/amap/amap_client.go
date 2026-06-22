@@ -142,9 +142,11 @@ type POI struct {
 type DrivingRouteResult struct {
 	TotalDistance float64
 	TotalDuration int
+	TotalTaxiCost float64
 	Polyline      string
 	Steps         []RouteStep
 	OrderedPoints []OrderedRoutePoint
+	Paths         []Path
 }
 
 type RouteStep struct {
@@ -155,12 +157,15 @@ type RouteStep struct {
 }
 
 type OrderedRoutePoint struct {
-	ID        int64
-	SortOrder int
-	Longitude float64
-	Latitude  float64
-	Distance  float64
-	Duration  int
+	ID            int64
+	OriginalIndex int
+	SortedIndex   int
+	SortOrder     int
+	Longitude     float64
+	Latitude      float64
+	Name          string
+	Distance      float64
+	Duration      int
 }
 
 func (c *AmapClient) PlanDrivingRoute(originLng, originLat float64, points []OrderedRoutePoint, strategy int) (*DrivingRouteResult, error) {
@@ -242,6 +247,7 @@ func (c *AmapClient) PlanDrivingRoute(originLng, originLat float64, points []Ord
 		TotalDuration: totalDuration,
 		Polyline:      path.Polyline,
 		OrderedPoints: make([]OrderedRoutePoint, 0, len(points)),
+		Paths:         routeResp.Route.Paths,
 	}
 
 	for _, step := range path.Steps {

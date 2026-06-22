@@ -41,17 +41,7 @@ import com.dispute.app.model.MockData
 import androidx.compose.runtime.LaunchedEffect
 
 @Composable
-fun JudicialListPage() {
-    val appState = androidx.compose.runtime.remember { com.dispute.app.AppState() }
-    val router = androidx.compose.runtime.remember { com.dispute.app.Router(appState) }
-
-    CompositionLocalProvider(
-        LocalAppState provides appState,
-        LocalRouter provides router
-    ) {
-        JudicialListContent()
-    }
-}
+fun JudicialListPage() = JudicialListContent()
 
 @Composable
 private fun JudicialListContent() {

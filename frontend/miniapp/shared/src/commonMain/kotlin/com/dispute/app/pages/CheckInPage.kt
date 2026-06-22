@@ -18,7 +18,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -37,25 +36,20 @@ import com.dispute.app.Route
 import com.dispute.app.components.AppCard
 import com.dispute.app.model.GridWorkerMockData
 import com.dispute.app.model.TaskPoint
+import com.dispute.app.platform.CameraService
+import com.dispute.app.platform.LivenessAction
+import com.dispute.app.platform.LivenessDetector
+import com.dispute.app.platform.LocationResult
+import com.dispute.app.platform.LocationService
+import com.dispute.app.platform.PhotoOptions
+import com.dispute.app.platform.PhotoResult
 import kotlinx.coroutines.launch
 import kotlinx.datetime.Clock
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toLocalDateTime
 
 @Composable
-fun CheckInPage() {
-    val appState = androidx.compose.runtime.remember { com.dispute.app.AppState() }
-    val router = androidx.compose.runtime.remember { com.dispute.app.Router(appState) }
-    val apiClient = androidx.compose.runtime.remember { com.dispute.app.api.ApiClient() }
-
-    CompositionLocalProvider(
-        LocalAppState provides appState,
-        LocalRouter provides router,
-        LocalApiClient provides apiClient
-    ) {
-        CheckInContent()
-    }
-}
+fun CheckInPage() = CheckInContent()
 
 @Composable
 private fun CheckInContent() {
@@ -66,19 +60,28 @@ private fun CheckInContent() {
     val checkInPoint by appState.checkInPoint
     val selectedTask by appState.selectedGridTask
 
+    val locationService = remember { LocationService() }
+    val cameraService = remember { CameraService() }
+    val livenessDetector = remember { LivenessDetector() }
+
     val routeParams = currentRoute as? Route.CheckIn
     val taskId = routeParams?.taskId ?: selectedTask?.id ?: ""
     val pointId = routeParams?.pointId ?: checkInPoint?.id ?: ""
 
     var location by remember { mutableStateOf<Pair<Double, Double>?>(null) }
+    var locationAccuracy by remember { mutableStateOf<Float?>(null) }
+    var locationResult by remember { mutableStateOf<LocationResult?>(null) }
     var address by remember { mutableStateOf("定位中...") }
     var hasPhoto by remember { mutableStateOf(false) }
+    var photoDataUrl by remember { mutableStateOf<String?>(null) }
     var livenessVerified by remember { mutableStateOf(false) }
+    var livenessScore by remember { mutableStateOf<Float?>(null) }
+    var livenessPhotoDataUrl by remember { mutableStateOf<String?>(null) }
     var isCheckingIn by remember { mutableStateOf(false) }
     var checkInSuccess by remember { mutableStateOf(false) }
 
     val point = checkInPoint ?: selectedTask?.pointList?.find { it.id == pointId }
-    ?: GridWorkerMockData.mockTasks.flatMap { it.pointList }.find { it.id == pointId }
+        ?: GridWorkerMockData.mockTasks.flatMap { it.pointList }.find { it.id == pointId }
 
     androidx.compose.runtime.LaunchedEffect(Unit) {
         point?.let {
@@ -128,25 +131,75 @@ private fun CheckInContent() {
                 address = address,
                 longitude = location?.first,
                 latitude = location?.second,
+                accuracy = locationAccuracy,
                 onRefreshLocation = {
                     address = "正在获取定位..."
                     appState.appScope.launch {
-                        kotlinx.coroutines.delay(1000)
-                        location = Pair(point.longitude, point.latitude)
-                        address = point.address
-                        appState.showToast("定位成功")
+                        try {
+                            val result = locationService.getCurrentLocation()
+                            locationResult = result
+                            location = Pair(result.longitude, result.latitude)
+                            locationAccuracy = result.accuracy
+                            address = "经度: ${"%.6f".format(result.longitude)}, 纬度: ${"%.6f".format(result.latitude)}"
+                            if (result.isMock) {
+                                appState.showToast("使用模拟定位，请检查定位权限")
+                            } else {
+                                appState.showToast("定位成功")
+                            }
+                        } catch (e: Exception) {
+                            location = Pair(point.longitude, point.latitude)
+                            address = point.address
+                            appState.showToast("定位失败: ${e.message}")
+                        }
                     }
                 }
             )
 
             PhotoCard(
                 hasPhoto = hasPhoto,
-                onTakePhoto = { hasPhoto = true }
+                photoDataUrl = photoDataUrl,
+                onTakePhoto = {
+                    appState.appScope.launch {
+                        try {
+                            val result = cameraService.takePhoto(
+                                PhotoOptions(
+                                    enableBase64 = true,
+                                    requireLiveDetection = false
+                                )
+                            )
+                            hasPhoto = true
+                            photoDataUrl = result.base64Data ?: result.filePath
+                            appState.showToast("拍照成功")
+                        } catch (e: Exception) {
+                            appState.showToast("拍照失败: ${e.message}")
+                        }
+                    }
+                }
             )
 
             LivenessCard(
                 verified = livenessVerified,
-                onVerify = { livenessVerified = true }
+                score = livenessScore,
+                onVerify = {
+                    appState.appScope.launch {
+                        try {
+                            val actions = listOf(LivenessAction.BLINK, LivenessAction.SMILE)
+                            val livenessResult = livenessDetector.detectLiveness(
+                                requiredActions = actions,
+                                timeoutMs = 15000L
+                            )
+                            livenessVerified = livenessResult.passed
+                            livenessScore = livenessResult.score
+                            if (livenessResult.passed) {
+                                appState.showToast("活体验证通过，分数: ${"%.2f".format(livenessResult.score)}")
+                            } else {
+                                appState.showToast(livenessResult.errorMessage ?: "活体验证失败")
+                            }
+                        } catch (e: Exception) {
+                            appState.showToast("活体验证失败: ${e.message}")
+                        }
+                    }
+                }
             )
 
             CheckInTips()
@@ -166,7 +219,10 @@ private fun CheckInContent() {
                             workerId = "gw001",
                             longitude = location!!.first,
                             latitude = location!!.second,
+                            locationAccuracy = locationAccuracy?.toDouble(),
                             address = address,
+                            photoUrl = photoDataUrl,
+                            livePhotoUrl = livenessPhotoDataUrl,
                             livenessVerified = livenessVerified
                         )
                         apiClient.gridWorker.checkIn(checkInRequest)
@@ -266,6 +322,7 @@ private fun LocationCard(
     address: String,
     longitude: Double?,
     latitude: Double?,
+    accuracy: Float?,
     onRefreshLocation: () -> Unit
 ) {
     AppCard(
@@ -286,8 +343,9 @@ private fun LocationCard(
                     )
                     if (longitude != null && latitude != null) {
                         Spacer(modifier = Modifier.height(4.dp))
+                        val accuracyText = accuracy?.let { " | 精度: ${"%.0f".format(it)}m" } ?: ""
                         Text(
-                            text = "经度: ${"%.6f".format(longitude)} | 纬度: ${"%.6f".format(latitude)}",
+                            text = "经度: ${"%.6f".format(longitude)} | 纬度: ${"%.6f".format(latitude)}$accuracyText",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -345,6 +403,7 @@ private fun LocationCard(
 @Composable
 private fun PhotoCard(
     hasPhoto: Boolean,
+    photoDataUrl: String?,
     onTakePhoto: () -> Unit
 ) {
     AppCard(
@@ -408,6 +467,7 @@ private fun PhotoCard(
 @Composable
 private fun LivenessCard(
     verified: Boolean,
+    score: Float?,
     onVerify: () -> Unit
 ) {
     AppCard(
@@ -444,8 +504,9 @@ private fun LivenessCard(
                         color = if (verified) Color(0xFF22C55E) else MaterialTheme.colorScheme.onSurface
                     )
                     Spacer(modifier = Modifier.height(4.dp))
+                    val scoreText = score?.let { " | 分数: ${"%.2f".format(it)}" } ?: ""
                     Text(
-                        text = if (verified) "本人身份已确认" else "点击开始人脸识别",
+                        text = if (verified) "本人身份已确认$scoreText" else "点击开始人脸识别",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -489,9 +550,9 @@ private fun CheckInTips() {
             Spacer(modifier = Modifier.height(8.dp))
             Text(
                 text = "1. 请确保您已到达指定位置后再进行签到\n" +
-                       "2. 现场照片需清晰反映实际环境\n" +
-                       "3. 活体验证需本人完成，不可替代\n" +
-                       "4. 虚假签到将导致积分扣除并影响考核",
+                        "2. 现场照片需清晰反映实际环境\n" +
+                        "3. 活体验证需本人完成，不可替代\n" +
+                        "4. 虚假签到将导致积分扣除并影响考核",
                 style = MaterialTheme.typography.bodySmall,
                 color = Color(0xFF92400E),
                 lineHeight = 20.sp
@@ -622,7 +683,11 @@ private fun CheckInSuccessScreen(
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     InfoRow("点位名称", point.name)
                     InfoRow("位置", point.address)
-                    InfoRow("签到时间", Clock.System.now().toLocalDateTime(TimeZone.currentSystemDefault()).toString().replace("T", " "))
+                    InfoRow(
+                        "签到时间",
+                        Clock.System.now().toLocalDateTime(TimeZone.currentSystemDefault()).toString()
+                            .replace("T", " ")
+                    )
                     InfoRow("获得积分", "+5 积分", valueColor = Color(0xFFFF9500))
                 }
             }

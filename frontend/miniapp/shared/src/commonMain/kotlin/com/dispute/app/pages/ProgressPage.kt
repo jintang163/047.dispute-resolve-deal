@@ -44,17 +44,7 @@ import com.dispute.app.model.Case
 import com.dispute.app.model.MockData
 
 @Composable
-fun ProgressPage(initialCaseNo: String = "", initialPhone: String? = null) {
-    val appState = androidx.compose.runtime.remember { com.dispute.app.AppState() }
-    val router = androidx.compose.runtime.remember { com.dispute.app.Router(appState) }
-
-    CompositionLocalProvider(
-        LocalAppState provides appState,
-        LocalRouter provides router
-    ) {
-        ProgressContent(initialCaseNo = initialCaseNo, initialPhone = initialPhone)
-    }
-}
+fun ProgressPage(initialCaseNo: String = "", initialPhone: String? = null) = ProgressContent(initialCaseNo = initialCaseNo, initialPhone = initialPhone)
 
 @Composable
 private fun ProgressContent(initialCaseNo: String = "", initialPhone: String? = null) {
