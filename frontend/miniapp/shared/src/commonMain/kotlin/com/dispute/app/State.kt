@@ -18,6 +18,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.dispute.app.audio.TranscribeManager
+import com.dispute.app.api.ApiClient
 import com.dispute.app.model.Case
 import com.dispute.app.model.Gift
 import com.dispute.app.model.GiftCategory
@@ -31,6 +33,7 @@ import com.dispute.app.model.PointRule
 import com.dispute.app.model.TaskPoint
 import com.dispute.app.model.User
 import com.dispute.app.model.VisitRecord
+import androidx.compose.runtime.State
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -115,7 +118,25 @@ class AppState {
     private val _checkInPoint = mutableStateOf<TaskPoint?>(null)
     val checkInPoint: State<TaskPoint?> = _checkInPoint
 
+    private var _transcribeManager: TranscribeManager? = null
+    val transcribeManager: TranscribeManager
+        get() = _transcribeManager ?: throw IllegalStateException("TranscribeManager not initialized")
+
+    val pendingTranscribeCount: State<Int>
+        get() = _transcribeManager?.pendingCount ?: mutableStateOf(0)
+
+    val processingTranscribeCount: State<Int>
+        get() = _transcribeManager?.processingCount ?: mutableStateOf(0)
+
     val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+
+    fun initTranscribeManager(apiClient: ApiClient) {
+        if (_transcribeManager != null) return
+        _transcribeManager = TranscribeManager(apiClient)
+        _transcribeManager?.start()
+    }
+
+    fun isTranscribeManagerInitialized(): Boolean = _transcribeManager != null
 
     fun setUser(user: User?) {
         _currentUser.value = user

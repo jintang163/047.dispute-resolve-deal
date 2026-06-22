@@ -101,6 +101,7 @@ fun App() {
     val apiClientRef = apiClient
     val appStateRef = appState
     LaunchedEffect(Unit) {
+        appStateRef.initTranscribeManager(apiClientRef)
         if (appStateRef.isLoggedIn()) {
             appStateRef.loadCurrentGridWorker(apiClientRef)
         }

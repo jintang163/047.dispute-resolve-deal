@@ -19,6 +19,13 @@ type MediationRecord struct {
 	NextMediationDate *time.Time `json:"nextMediationDate"`
 	Remark            string     `gorm:"size:500" json:"remark"`
 	CreatedBy         int64      `json:"createdBy"`
+	AudioUrl          string     `gorm:"size:500" json:"audioUrl"`
+	AudioDuration     int        `json:"audioDuration"`
+	AudioFileSize     int64      `json:"audioFileSize"`
+	TranscriptText    string     `gorm:"type:text" json:"transcriptText"`
+	TranscribeStatus  int        `gorm:"default:0;index" json:"transcribeStatus"`
+	TranscribeTaskId  string     `gorm:"size:128" json:"transcribeTaskId"`
+	TranscribeAt      *time.Time `json:"transcribeAt"`
 }
 
 func (MediationRecord) TableName() string {

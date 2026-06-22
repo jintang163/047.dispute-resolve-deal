@@ -37,6 +37,7 @@ import com.dispute.app.Route
 import com.dispute.app.components.AppCard
 import com.dispute.app.components.InfoCard
 import com.dispute.app.components.Timeline
+import com.dispute.app.components.VoiceRecordSection
 import com.dispute.app.model.Case
 import com.dispute.app.model.MockData
 import kotlinx.coroutines.launch
@@ -151,6 +152,12 @@ private fun CaseDetailContent(caseNumber: String) {
                     AppCard(title = "调解进度（${progress.size}条记录）") {
                         Timeline(progressList = progress)
                     }
+                }
+
+                item {
+                    VoiceRecordSection(
+                        caseId = case!!.caseNumber
+                    )
                 }
 
                 if (case!!.evidenceList.isNotEmpty()) {

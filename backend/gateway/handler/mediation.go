@@ -39,6 +39,12 @@ type MediationRecordRequest struct {
 	IsDraft          int32    `json:"isDraft"`
 	TemplateID       int64    `json:"templateId"`
 	TemplateName     string   `json:"templateName"`
+	AudioUrl         string   `json:"audioUrl"`
+	AudioDuration    int      `json:"audioDuration"`
+	AudioFileSize    int64    `json:"audioFileSize"`
+	TranscriptText   string   `json:"transcriptText"`
+	TranscribeStatus int      `json:"transcribeStatus"`
+	TranscribeTaskId string   `json:"transcribeTaskId"`
 }
 
 func CreateMediationRecord(ctx context.Context, c *app.RequestContext) {
@@ -115,6 +121,12 @@ func CreateMediationRecord(ctx context.Context, c *app.RequestContext) {
 		"is_draft":            req.IsDraft,
 		"template_id":         req.TemplateID,
 		"template_name":       req.TemplateName,
+		"audio_url":           req.AudioUrl,
+		"audio_duration":      req.AudioDuration,
+		"audio_file_size":     req.AudioFileSize,
+		"transcript_text":     req.TranscriptText,
+		"transcribe_status":   req.TranscribeStatus,
+		"transcribe_task_id":  req.TranscribeTaskId,
 	}
 
 	tx := database.GetDB().Begin()
@@ -303,6 +315,25 @@ func UpdateMediationRecord(ctx context.Context, c *app.RequestContext) {
 		"agreement_content":  req.AgreementContent,
 		"result":             req.Result,
 		"next_step":          req.NextStep,
+	}
+
+	if req.AudioUrl != "" {
+		updates["audio_url"] = req.AudioUrl
+	}
+	if req.AudioDuration > 0 {
+		updates["audio_duration"] = req.AudioDuration
+	}
+	if req.AudioFileSize > 0 {
+		updates["audio_file_size"] = req.AudioFileSize
+	}
+	if req.TranscriptText != "" {
+		updates["transcript_text"] = req.TranscriptText
+	}
+	if req.TranscribeStatus > 0 {
+		updates["transcribe_status"] = req.TranscribeStatus
+	}
+	if req.TranscribeTaskId != "" {
+		updates["transcribe_task_id"] = req.TranscribeTaskId
 	}
 
 	if len(req.Participants) > 0 {
@@ -819,4 +850,82 @@ func AdoptMediationProtocol(ctx context.Context, c *app.RequestContext) {
 	cache.Del(ctx, cacheKey)
 
 	c.JSON(http.StatusOK, response.SuccessWithMessage(nil, "协议已采用，已同步至案件协议内容"))
+}
+
+type SaveTranscribeResultRequest struct {
+	TranscriptText   string `json:"transcriptText" binding:"required"`
+	TranscribeTaskId string `json:"transcribeTaskId"`
+	AudioUrl         string `json:"audioUrl"`
+	Duration         int    `json:"duration"`
+}
+
+func SaveTranscribeResult(ctx context.Context, c *app.RequestContext) {
+	caseID, _ := strconv.ParseInt(c.Param("id"), 10, 64)
+	recordID, _ := strconv.ParseInt(c.Param("recordId"), 10, 64)
+	userInfo := middleware.GetUserInfo(c)
+
+	var req SaveTranscribeResultRequest
+	if err := c.BindAndValidate(&req); err != nil {
+		c.JSON(http.StatusBadRequest, response.BadRequest(err.Error()))
+		return
+	}
+
+	var record struct {
+		MediatorID int64  `gorm:"column:mediator_id"`
+		CaseNo     string `gorm:"column:case_no"`
+	}
+	database.GetDB().Table("dispute_mediation_record").
+		Select("mediator_id, case_no").
+		Where("id = ? AND case_id = ?", recordID, caseID).
+		First(&record)
+
+	if record.MediatorID == 0 {
+		c.JSON(http.StatusNotFound, response.NotFound("调解记录不存在"))
+		return
+	}
+
+	if record.MediatorID != userInfo.UserID && userInfo.Role > constants.RoleLeader {
+		c.JSON(http.StatusForbidden, response.Forbidden("只有案件调解员或管理员才能修改转写结果"))
+		return
+	}
+
+	updates := map[string]interface{}{
+		"transcript_text":    req.TranscriptText,
+		"transcribe_status":  2,
+		"transcribe_at":      time.Now(),
+	}
+
+	if req.TranscribeTaskId != "" {
+		updates["transcribe_task_id"] = req.TranscribeTaskId
+	}
+	if req.AudioUrl != "" {
+		updates["audio_url"] = req.AudioUrl
+	}
+	if req.Duration > 0 {
+		updates["audio_duration"] = req.Duration
+	}
+
+	tx := database.GetDB().Begin()
+	tx.Table("dispute_mediation_record").
+		Where("id = ?", recordID).
+		Updates(updates)
+
+	history := map[string]interface{}{
+		"case_id":          caseID,
+		"case_no":          record.CaseNo,
+		"operation_type":   "TRANSCRIBE_RESULT_SAVE",
+		"operation_detail": fmt.Sprintf("保存语音转写结果，字数: %d字", len(req.TranscriptText)),
+		"operator_id":      userInfo.UserID,
+		"operator_name":    userInfo.RealName,
+	}
+	tx.Table("dispute_case_history").Create(history)
+
+	tx.Commit()
+
+	cacheKey := fmt.Sprintf("%s%d", constants.RedisKeyPrefixCase, caseID)
+	cache.Del(ctx, cacheKey)
+
+	c.JSON(http.StatusOK, response.SuccessWithMessage(map[string]interface{}{
+		"recordId": recordID,
+	}, "转写结果保存成功"))
 }

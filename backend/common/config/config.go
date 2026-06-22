@@ -23,6 +23,7 @@ type Config struct {
 	FaDaDa       FaDaDaConfig       `mapstructure:"fadada"`
 	Blockchain   BlockchainConfig   `mapstructure:"blockchain"`
 	AliyunVoice  AliyunVoiceConfig  `mapstructure:"aliyun-voice"`
+	AliyunTingwu AliyunTingwuConfig `mapstructure:"aliyun-tingwu"`
 	Population   PopulationConfig   `mapstructure:"population"`
 	Services     ServicesConfig     `mapstructure:"services"`
 	ServicePorts ServicePortsConfig `mapstructure:"service-ports"`
@@ -235,6 +236,15 @@ type AliyunVoiceConfig struct {
 	Endpoint        string `mapstructure:"endpoint"`
 	NlsEndpoint     string `mapstructure:"nls_endpoint"`
 	NlsAppKey       string `mapstructure:"nls_app_key"`
+}
+
+type AliyunTingwuConfig struct {
+	AccessKeyID     string `mapstructure:"access_key_id"`
+	AccessKeySecret string `mapstructure:"access_key_secret"`
+	RegionID        string `mapstructure:"region_id"`
+	AppKey          string `mapstructure:"app_key"`
+	CallbackURL     string `mapstructure:"callback_url"`
+	Endpoint        string `mapstructure:"endpoint"`
 }
 
 type WechatMiniAppConfig struct {

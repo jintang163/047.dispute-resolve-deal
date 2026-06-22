@@ -58,6 +58,10 @@ func RegisterRoutes(h *app.Hertz) {
 		public.POST("/callback/aliyun-voice", handler.AliyunVoiceCallback)
 		public.POST("/idcard/query", handler.QueryPopulationByIDCard)
 		public.POST("/voice/recognize", handler.VoiceRecognize)
+		public.POST("/voice/transcribe/submit", handler.SubmitTranscribeTask)
+		public.GET("/voice/transcribe/task/:taskId", handler.GetTranscribeTask)
+		public.POST("/voice/transcribe/callback", handler.TranscribeCallback)
+		public.POST("/voice/transcribe/sync", handler.SyncTranscribe)
 		public.POST("/receipt/qrcode", handler.GenerateReceiptQRCode)
 		public.GET("/scan/:token", handler.ScanRedirect)
 	}
@@ -70,6 +74,12 @@ func RegisterRoutes(h *app.Hertz) {
 		{
 			user.GET("/info", handler.GetUserInfo)
 			user.PUT("/password", handler.ChangePassword)
+		}
+
+		voice := userAuth.Group("/voice")
+		{
+			voice.GET("/transcribe/my-tasks", handler.GetMyTranscribeTasks)
+			voice.POST("/transcribe/:taskId/cancel", handler.CancelTranscribeTask)
 		}
 
 		dispute := userAuth.Group("/dispute")
@@ -103,6 +113,7 @@ func RegisterRoutes(h *app.Hertz) {
 				mediation.POST("", handler.CreateMediationRecord)
 				mediation.PUT("/:recordId", handler.UpdateMediationRecord)
 				mediation.GET("/:recordId/ai-summary", handler.GetAISummary)
+				mediation.POST("/:recordId/transcribe-result", handler.SaveTranscribeResult)
 				mediation.POST("/protocol/generate", handler.GenerateMediationProtocol)
 				mediation.GET("/protocols", handler.GetMediationProtocolList)
 				mediation.POST("/protocol/:protocolId/adopt", handler.AdoptMediationProtocol)
