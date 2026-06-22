@@ -21,6 +21,7 @@ import (
 	"github.com/dispute-resolve/gateway/middleware"
 
 	"github.com/cloudwego/hertz/pkg/app"
+	"github.com/olivere/elastic/v7"
 	"gorm.io/gorm"
 )
 
@@ -388,6 +389,8 @@ func CreateDispute(ctx context.Context, c *app.RequestContext) {
 			"createBy": userInfo.UserID,
 		}
 		mq.SendMessage(constants.MQTopicCaseCreate, msg)
+
+		SyncCaseToES(caseID)
 	}()
 
 	c.JSON(http.StatusOK, response.SuccessWithMessage(map[string]interface{}{
@@ -741,6 +744,8 @@ func UpdateDisputeStatus(ctx context.Context, c *app.RequestContext) {
 	cacheKey := fmt.Sprintf("%s%d", constants.RedisKeyPrefixCase, id)
 	cache.Del(ctx, cacheKey)
 
+	go SyncCaseToES(id)
+
 	c.JSON(http.StatusOK, response.SuccessWithMessage(nil, "状态更新成功"))
 }
 
@@ -816,5 +821,319 @@ func parseKeywordsJSON(item map[string]interface{}) {
 		item["keywords"] = v
 	case []string:
 		item["keywords"] = v
+	}
+}
+
+type DisputeSearchRequest struct {
+	Query    string `form:"query" binding:"required"`
+	Page     int    `form:"page"`
+	PageSize int    `form:"pageSize"`
+	Status   int32  `form:"status"`
+	TypeID   int64  `form:"typeId"`
+}
+
+type DisputeSearchResult struct {
+	ID              int64                  `json:"id"`
+	CaseNo          string                 `json:"caseNo"`
+	Title           string                 `json:"title"`
+	Description     string                 `json:"description"`
+	TypeName        string                 `json:"typeName"`
+	Status          int32                  `json:"status"`
+	StatusName      string                 `json:"statusName"`
+	ApplicantName   string                 `json:"applicantName"`
+	ApplicantIDCard string                 `json:"applicantIdcard"`
+	RespondentName  string                 `json:"respondentName"`
+	RespondentIDCard string                `json:"respondentIdcard"`
+	MediatorName    string                 `json:"mediatorName"`
+	OrgName         string                 `json:"orgName"`
+	CreatedAt       string                 `json:"createdAt"`
+	Highlights      map[string][]string    `json:"highlights"`
+}
+
+func SearchDisputeCases(ctx context.Context, c *app.RequestContext) {
+	var req DisputeSearchRequest
+	if err := c.BindAndValidate(&req); err != nil {
+		c.JSON(http.StatusBadRequest, response.BadRequest(err.Error()))
+		return
+	}
+
+	if req.Page <= 0 {
+		req.Page = 1
+	}
+	if req.PageSize <= 0 {
+		req.PageSize = 20
+	}
+
+	esClient := database.GetESClient()
+	if esClient == nil {
+		searchFallbackWithMySQL(ctx, c, req)
+		return
+	}
+
+	userInfo := middleware.GetUserInfo(c)
+
+	boolQuery := elastic.NewBoolQuery()
+
+	multiMatch := elastic.NewMultiMatchQuery(req.Query,
+		"applicant_name", "applicant_name.pinyin",
+		"respondent_name", "respondent_name.pinyin",
+		"applicant_idcard", "respondent_idcard",
+		"title", "title.pinyin",
+		"description", "description.pinyin",
+		"case_no",
+	).Type("best_fields").MinimumShouldMatch("1")
+
+	boolQuery.Must(multiMatch)
+
+	if req.Status > 0 {
+		boolQuery.Filter(elastic.NewTermQuery("status", req.Status))
+	}
+	if req.TypeID > 0 {
+		boolQuery.Filter(elastic.NewTermQuery("type_id", req.TypeID))
+	}
+
+	if userInfo.Role == constants.RoleMediator {
+		boolQuery.Filter(elastic.NewTermQuery("mediator_id", userInfo.UserID))
+	} else if userInfo.Role == constants.RoleLeader {
+		boolQuery.Filter(elastic.NewTermsQuery("organization_id", getOrgIDs(userInfo.OrganizationID)...))
+	}
+
+	highlight := elastic.NewHighlight().
+		PreTags("<em class=\"search-highlight\">").
+		PostTags("</em>").
+		Field("title").
+		Field("description").
+		Field("applicant_name").
+		Field("respondent_name").
+		Field("applicant_idcard").
+		Field("respondent_idcard").
+		Field("case_no")
+
+	from := (req.Page - 1) * req.PageSize
+
+	searchResult, err := esClient.Search().
+		Index(constants.ESIndexCase).
+		Query(boolQuery).
+		Highlight(highlight).
+		From(from).
+		Size(req.PageSize).
+		Sort("created_at", false).
+		Do(ctx)
+
+	if err != nil {
+		logger.Error("Elasticsearch search failed", "error", err)
+		searchFallbackWithMySQL(ctx, c, req)
+		return
+	}
+
+	results := make([]DisputeSearchResult, 0, len(searchResult.Hits.Hits))
+	for _, hit := range searchResult.Hits.Hits {
+		var source map[string]interface{}
+		if err := json.Unmarshal(hit.Source, &source); err != nil {
+			continue
+		}
+
+		statusName := ""
+		if s, ok := source["status"].(float64); ok {
+			statusName = constants.CaseStatusMap[int(s)]
+		}
+
+		result := DisputeSearchResult{
+			ID:              toInt64(source["id"]),
+			CaseNo:          toString(source["case_no"]),
+			Title:           toString(source["title"]),
+			Description:     toString(source["description"]),
+			TypeName:        toString(source["type_name"]),
+			Status:          toInt32(source["status"]),
+			StatusName:      statusName,
+			ApplicantName:   toString(source["applicant_name"]),
+			ApplicantIDCard: toString(source["applicant_idcard"]),
+			RespondentName:  toString(source["respondent_name"]),
+			RespondentIDCard: toString(source["respondent_idcard"]),
+			MediatorName:    toString(source["mediator_name"]),
+			OrgName:         toString(source["org_name"]),
+			CreatedAt:       toString(source["created_at"]),
+			Highlights:      hit.Highlight,
+		}
+
+		results = append(results, result)
+	}
+
+	c.JSON(http.StatusOK, response.Page(results, searchResult.TotalHits(), req.Page, req.PageSize))
+}
+
+func searchFallbackWithMySQL(ctx context.Context, c *app.RequestContext, req DisputeSearchRequest) {
+	userInfo := middleware.GetUserInfo(c)
+	db := database.GetDB().Table("dispute_case dc").
+		Select("dc.*, dt.type_name, su.real_name as mediator_name, so.org_name").
+		Joins("LEFT JOIN dispute_type dt ON dc.type_id = dt.id").
+		Joins("LEFT JOIN sys_user su ON dc.mediator_id = su.id").
+		Joins("LEFT JOIN sys_organization so ON dc.organization_id = so.id").
+		Where("dc.deleted_at IS NULL")
+
+	if userInfo.Role == constants.RoleMediator {
+		db = db.Where("dc.mediator_id = ?", userInfo.UserID)
+	} else if userInfo.Role == constants.RoleLeader {
+		db = db.Where("dc.organization_id IN (SELECT id FROM sys_organization WHERE parent_id = ? OR id = ?)",
+			userInfo.OrganizationID, userInfo.OrganizationID)
+	}
+
+	keyword := req.Query
+	if keyword != "" {
+		db = db.Where(
+			"dc.title LIKE ? OR dc.description LIKE ? OR dc.case_no LIKE ? OR dc.applicant_name LIKE ? OR dc.respondent_name LIKE ? OR dc.applicant_idcard LIKE ? OR dc.respondent_idcard LIKE ?",
+			"%"+keyword+"%", "%"+keyword+"%", "%"+keyword+"%",
+			"%"+keyword+"%", "%"+keyword+"%", "%"+keyword+"%", "%"+keyword+"%",
+		)
+	}
+
+	if req.Status > 0 {
+		db = db.Where("dc.status = ?", req.Status)
+	}
+	if req.TypeID > 0 {
+		db = db.Where("dc.type_id = ?", req.TypeID)
+	}
+
+	var total int64
+	db.Count(&total)
+
+	var list []map[string]interface{}
+	db.Order("dc.created_at DESC").
+		Offset((req.Page - 1) * req.PageSize).
+		Limit(req.PageSize).
+		Find(&list)
+
+	results := make([]DisputeSearchResult, 0, len(list))
+	for _, item := range list {
+		statusName := ""
+		if s, ok := item["status"].(int32); ok {
+			statusName = constants.CaseStatusMap[int(s)]
+		}
+
+		highlights := make(map[string][]string)
+		if keyword != "" {
+			for field, jsonKey := range map[string]string{
+				"title": "title", "description": "description",
+				"applicant_name": "applicant_name", "respondent_name": "respondent_name",
+				"applicant_idcard": "applicant_idcard", "respondent_idcard": "respondent_idcard",
+				"case_no": "case_no",
+			} {
+				if val, ok := item[jsonKey].(string); ok && val != "" && strings.Contains(strings.ToLower(val), strings.ToLower(keyword)) {
+					highlights[field] = []string{strings.ReplaceAll(val, keyword, "<em class=\"search-highlight\">"+keyword+"</em>")}
+				}
+			}
+		}
+
+		result := DisputeSearchResult{
+			ID:               toInt64(item["id"]),
+			CaseNo:           toString(item["case_no"]),
+			Title:            toString(item["title"]),
+			Description:      toString(item["description"]),
+			TypeName:         toString(item["type_name"]),
+			Status:           toInt32(item["status"]),
+			StatusName:       statusName,
+			ApplicantName:    toString(item["applicant_name"]),
+			ApplicantIDCard:  toString(item["applicant_idcard"]),
+			RespondentName:   toString(item["respondent_name"]),
+			RespondentIDCard: toString(item["respondent_idcard"]),
+			MediatorName:     toString(item["mediator_name"]),
+			OrgName:          toString(item["org_name"]),
+			CreatedAt:        toString(item["created_at"]),
+			Highlights:       highlights,
+		}
+
+		results = append(results, result)
+	}
+
+	c.JSON(http.StatusOK, response.Page(results, total, req.Page, req.PageSize))
+}
+
+func getOrgIDs(orgID int64) []interface{} {
+	var ids []int64
+	database.GetDB().Table("sys_organization").
+		Select("id").
+		Where("parent_id = ? OR id = ?", orgID, orgID).
+		Pluck("id", &ids)
+
+	result := make([]interface{}, len(ids))
+	for i, id := range ids {
+		result[i] = id
+	}
+	return result
+}
+
+func toInt64(v interface{}) int64 {
+	switch val := v.(type) {
+	case int64:
+		return val
+	case float64:
+		return int64(val)
+	case json.Number:
+		n, _ := val.Int64()
+		return n
+	default:
+		return 0
+	}
+}
+
+func toInt32(v interface{}) int32 {
+	switch val := v.(type) {
+	case int32:
+		return val
+	case float64:
+		return int32(val)
+	case json.Number:
+		n, _ := val.Int64()
+		return int32(n)
+	default:
+		return 0
+	}
+}
+
+func toString(v interface{}) string {
+	if v == nil {
+		return ""
+	}
+	switch val := v.(type) {
+	case string:
+		return val
+	default:
+		return fmt.Sprintf("%v", val)
+	}
+}
+
+func SyncCaseToES(caseID int64) {
+	esClient := database.GetESClient()
+	if esClient == nil {
+		return
+	}
+
+	ctx := context.Background()
+
+	var caseData map[string]interface{}
+	database.GetDB().Table("dispute_case dc").
+		Select("dc.*, dt.type_name, su.real_name as mediator_name, so.org_name").
+		Joins("LEFT JOIN dispute_type dt ON dc.type_id = dt.id").
+		Joins("LEFT JOIN sys_user su ON dc.mediator_id = su.id").
+		Joins("LEFT JOIN sys_organization so ON dc.organization_id = so.id").
+		Where("dc.id = ? AND dc.deleted_at IS NULL", caseID).
+		Find(&caseData)
+
+	if caseData == nil {
+		esClient.Delete().
+			Index(constants.ESIndexCase).
+			Id(strconv.FormatInt(caseID, 10)).
+			Do(ctx)
+		return
+	}
+
+	_, err := esClient.Index().
+		Index(constants.ESIndexCase).
+		Id(strconv.FormatInt(caseID, 10)).
+		BodyJson(caseData).
+		Do(ctx)
+
+	if err != nil {
+		logger.Error("Sync case to ES failed", "caseId", caseID, "error", err)
 	}
 }

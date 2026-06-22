@@ -31,6 +31,7 @@ type InitOptions struct {
 	EnableCourt     bool
 	EnableTRTC      bool
 	EnablePopulation bool
+	EnableES        bool
 	LogLevel        string
 }
 
@@ -127,6 +128,11 @@ func InitServiceWithOptions(opts InitOptions) *InitResult {
 	if opts.EnablePopulation {
 		population.InitPopulation()
 		logger.Info("Population database client initialized")
+	}
+
+	if opts.EnableES {
+		database.InitES(&config.GlobalConfig.Elasticsearch)
+		logger.Info("Elasticsearch client initialized")
 	}
 
 	stop := setupGracefulShutdown(opts.ServiceName)

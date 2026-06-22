@@ -85,6 +85,7 @@ func RegisterRoutes(h *app.Hertz) {
 		dispute := userAuth.Group("/dispute")
 		{
 			dispute.GET("", handler.GetDisputeList)
+			dispute.GET("/search", handler.SearchDisputeCases)
 			dispute.GET("/:id", handler.GetDisputeDetail)
 			dispute.POST("", handler.CreateDispute)
 			dispute.POST("/:id/assign", handler.AssignDispute)

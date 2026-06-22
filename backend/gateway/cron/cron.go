@@ -479,7 +479,9 @@ func syncESIndexTask() {
 		MediatorName     string
 		ApplicantName    string
 		ApplicantPhone   string
+		ApplicantIDCard  string
 		RespondentName   string
+		RespondentIDCard string
 		Level            int
 		CreatedAt        time.Time
 		UpdatedAt        time.Time
@@ -490,8 +492,8 @@ func syncESIndexTask() {
 		type_name, status,
 		org_id, org_name,
 		mediator_id, mediator_name,
-		applicant_name, applicant_phone,
-		respondent_name,
+		applicant_name, applicant_phone, applicant_id_card,
+		respondent_name, respondent_id_card,
 		case_level,
 		created_at, updated_at
 	FROM dispute_case
@@ -509,11 +511,7 @@ func syncESIndexTask() {
 
 	syncedCount := 0
 	for _, doc := range docs {
-		docJSON, err := json.Marshal(doc)
-		if err != nil {
-			continue
-		}
-		_ = docJSON
+		handler.SyncCaseToES(doc.ID)
 		syncedCount++
 	}
 

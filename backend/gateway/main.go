@@ -40,6 +40,7 @@ func main() {
 		EnableCourt:      true,
 		EnableTRTC:       true,
 		EnablePopulation: true,
+		EnableES:         true,
 		LogLevel:         "info",
 	})
 	defer initResult.Stop()

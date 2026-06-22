@@ -47,6 +47,39 @@ export interface DisputeListParams {
   endDate?: string;
 }
 
+export interface DisputeSearchParams {
+  query: string;
+  page?: number;
+  pageSize?: number;
+  status?: number;
+  typeId?: number;
+}
+
+export interface DisputeSearchResultItem {
+  id: number;
+  caseNo: string;
+  title: string;
+  description: string;
+  typeName: string;
+  status: number;
+  statusName: string;
+  applicantName: string;
+  applicantIdcard: string;
+  respondentName: string;
+  respondentIdcard: string;
+  mediatorName: string;
+  orgName: string;
+  createdAt: string;
+  highlights: Record<string, string[]>;
+}
+
+export interface DisputeSearchResponse {
+  list: DisputeSearchResultItem[];
+  total: number;
+  pageNum: number;
+  pageSize: number;
+}
+
 export interface DisputeListResponse {
   list: DisputeCase[];
   total: number;
@@ -273,6 +306,10 @@ export interface PopulationInfo {
 export const disputeService = {
   getList: (params?: DisputeListParams) => {
     return request.get<DisputeListResponse>('/dispute/list', { params });
+  },
+
+  search: (params: DisputeSearchParams) => {
+    return request.get<DisputeSearchResponse>('/dispute/search', { params });
   },
 
   getDetail: (id: string) => {
