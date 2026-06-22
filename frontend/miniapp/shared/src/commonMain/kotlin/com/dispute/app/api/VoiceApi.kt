@@ -1,6 +1,7 @@
 package com.dispute.app.api
 
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.SerialName
 
 class VoiceApi(private val client: ApiClient) {
 
@@ -83,7 +84,9 @@ data class SubmitTranscribeRequest(
     val fileBase64: String,
     val fileName: String,
     val format: String,
+    @SerialName("caseId")
     val caseId: String? = null,
+    @SerialName("recordId")
     val recordId: String? = null,
     val enableDiarization: Boolean = false,
     val speakerCount: Int = 2
@@ -92,12 +95,18 @@ data class SubmitTranscribeRequest(
 @Serializable
 data class VoiceTranscribeTaskResult(
     val taskId: String,
-    val status: String,
+    val status: String = "",
+    @SerialName("statusCode")
+    val statusCode: String = "",
+    @SerialName("statusName")
+    val statusName: String? = null,
     val transcriptText: String? = null,
     val duration: Int = 0,
     val wordCount: Int = 0,
     val sentences: List<TranscribeSentence> = emptyList(),
-    val errorMsg: String? = null
+    val errorMsg: String? = null,
+    @SerialName("errorMessage")
+    val errorMessage: String? = null
 )
 
 @Serializable
@@ -110,8 +119,12 @@ data class TranscribeSentence(
 
 @Serializable
 data class SaveTranscribeResultRequest(
+    @SerialName("transcriptText")
     val transcriptText: String,
+    @SerialName("transcribeTaskId")
     val transcribeTaskId: String? = null,
+    @SerialName("audioUrl")
     val audioUrl: String? = null,
+    @SerialName("duration")
     val duration: Int? = null
 )

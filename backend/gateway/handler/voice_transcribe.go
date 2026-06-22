@@ -31,8 +31,8 @@ type SubmitTranscribeRequest struct {
 	FileBase64        string `json:"fileBase64"`
 	FileName          string `json:"fileName"`
 	Format            string `json:"format"`
-	CaseID            int64  `json:"caseId"`
-	RecordID          int64  `json:"recordId"`
+	CaseIdStr         string `json:"caseId"`
+	RecordIdStr       string `json:"recordId"`
 	EnableDiarization bool   `json:"enableDiarization"`
 	SpeakerCount      int    `json:"speakerCount"`
 }
@@ -80,6 +80,9 @@ func SubmitTranscribeTask(ctx context.Context, c *app.RequestContext) {
 	if req.SpeakerCount <= 0 {
 		req.SpeakerCount = 2
 	}
+
+	caseId, _ := strconv.ParseInt(req.CaseIdStr, 10, 64)
+	recordId, _ := strconv.ParseInt(req.RecordIdStr, 10, 64)
 
 	var createdBy int64
 	if userInfo := middleware.GetUserInfo(c); userInfo != nil {
@@ -132,8 +135,8 @@ func SubmitTranscribeTask(ctx context.Context, c *app.RequestContext) {
 
 	task := &model.VoiceTranscribeTask{
 		TaskID:            taskId,
-		CaseID:            req.CaseID,
-		RecordID:          req.RecordID,
+		CaseID:            caseId,
+		RecordID:          recordId,
 		CreatedBy:         createdBy,
 		FileName:          req.FileName,
 		FileURL:           fileUrl,
@@ -295,6 +298,7 @@ func returnTranscribeTask(c *app.RequestContext, task *model.VoiceTranscribeTask
 	json.Unmarshal(taskJSON, &result)
 
 	result["status_name"] = model.TranscribeStatusMap[task.Status]
+	result["statusCode"] = model.TranscribeStatusCodeMap[task.Status]
 
 	if task.Sentences != "" {
 		var sentences []model.Sentence
@@ -348,6 +352,7 @@ func GetMyTranscribeTasks(ctx context.Context, c *app.RequestContext) {
 		itemJSON, _ := json.Marshal(item)
 		json.Unmarshal(itemJSON, &result)
 		result["status_name"] = model.TranscribeStatusMap[item.Status]
+		result["statusCode"] = model.TranscribeStatusCodeMap[item.Status]
 		resultList = append(resultList, result)
 	}
 

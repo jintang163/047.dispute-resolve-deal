@@ -1,6 +1,7 @@
 package com.dispute.app.storage
 
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.SerialName
 
 expect object LocalStorage {
     fun getString(key: String): String?
@@ -26,7 +27,9 @@ data class AudioStorageMeta(
     val sizeBytes: Long,
     val durationMs: Long = 0L,
     val createdAt: Long = 0L,
+    @SerialName("caseId")
     val caseId: String? = null,
+    @SerialName("recordId")
     val recordId: String? = null
 )
 
@@ -53,10 +56,15 @@ data class OfflineTranscribeTask(
     val format: String,
     val sizeBytes: Long,
     val durationMs: Long = 0L,
+    @SerialName("caseId")
     val caseId: String? = null,
+    @SerialName("recordId")
     val recordId: String? = null,
+    @SerialName("remoteTaskId")
     val remoteTaskId: String? = null,
+    @SerialName("transcriptText")
     val transcriptText: String? = null,
+    @SerialName("errorMessage")
     val errorMessage: String? = null,
     val retryCount: Int = 0,
     val createdAt: Long = 0L,

@@ -220,7 +220,18 @@ class TranscribeManager(
         try {
             val result = apiClient.voice.getTranscribeTask(remoteTaskId)
 
-            when (result.status) {
+            val finalStatus = result.statusCode.ifBlank {
+                when (result.status) {
+                    "3", "completed", "Completed", "已完成" -> "completed"
+                    "4", "failed", "Failed", "失败" -> "failed"
+                    "1", "2", "processing", "Processing", "Queuing", "转写中", "处理中" -> "processing"
+                    "0", "pending", "Pending", "等待中", "排队中" -> "pending"
+                    "5", "canceled", "Canceled", "已取消" -> "canceled"
+                    else -> result.status.lowercase()
+                }
+            }
+
+            when (finalStatus) {
                 "completed" -> {
                     val completedTask = task.copy(
                         status = TranscribeTaskStatus.COMPLETED,
@@ -233,10 +244,10 @@ class TranscribeManager(
 
                     onTaskCompleted(completedTask, result)
                 }
-                "failed" -> {
+                "failed", "canceled" -> {
                     val failedTask = task.copy(
                         status = TranscribeTaskStatus.FAILED,
-                        errorMessage = result.errorMsg ?: "转写失败",
+                        errorMessage = result.errorMsg ?: result.errorMessage ?: "转写失败",
                         updatedAt = System.currentTimeMillis()
                     )
                     tasks[taskIndex] = failedTask

@@ -20,6 +20,22 @@ var TranscribeStatusMap = map[int]string{
 	5: "已取消",
 }
 
+var TranscribeStatusCodeMap = map[int]string{
+	0: "pending",
+	1: "processing",
+	2: "processing",
+	3: "completed",
+	4: "failed",
+	5: "canceled",
+}
+
+var TingwuStatusToInternal = map[string]int{
+	"Queuing":    TranscribeStatusQueuing,
+	"Processing": TranscribeStatusProcessing,
+	"Completed":  TranscribeStatusCompleted,
+	"Failed":     TranscribeStatusFailed,
+}
+
 type Sentence struct {
 	Text      string `json:"text"`
 	BeginTime int    `json:"beginTime"`
